@@ -5,6 +5,8 @@ Built step by step: gateway → containers → Kubernetes → autoscaling → RA
 
 **Status:** Week 1 complete (LLM gateway, Docker, metrics, benchmark). Kubernetes is next.
 
+📖 **Write-up:** [LLMOps Platform, Week 1: Building an LLM Gateway with FastAPI, Docker and Prometheus](https://medium.com/@morrennagarisailaja/llmops-platform-week-1-building-an-llm-gateway-with-fastapi-docker-and-prometheus-9e62974db1a3)
+
 ## Architecture (Week 1)
 
 ```
@@ -23,8 +25,19 @@ Python · FastAPI · httpx · Prometheus client · Docker · Ollama · Qwen2.5-3
 
 ## Benchmark results (Week 1)
 
-20 sequential requests, `max_tokens=80`, Qwen2.5-3B on Ollama, MacBook Air (Apple Silicon).
 Measured with [`benchmark.py`](benchmark.py); the first (warm-up) request is excluded.
+
+**Setup**
+
+| | |
+|---|---|
+| Hardware | MacBook Air, Apple M1 (2020), 8 GB unified memory |
+| Model | `qwen2.5:3b` via Ollama (default 4-bit quantization), running natively on macOS |
+| Concurrency | 1 (20 sequential requests, no parallel load) |
+| Input | 5 short, one-sentence prompts, rotated |
+| Output | `max_tokens=80`, temperature 0.2; mean output 40 tokens (range 19–80) |
+| Latency | End-to-end, measured at the client: full non-streaming response, not time to first token |
+| Throughput | Generation tokens/s from Ollama's `eval_duration` (excludes prompt processing) |
 
 | Metric | Gateway in Docker | Gateway on host |
 |---|---|---|
@@ -42,6 +55,8 @@ Measured with [`benchmark.py`](benchmark.py); the first (warm-up) request is exc
   20-token answers finished in under 2 s. Latency ≈ output tokens ÷ throughput (80 ÷ 12.8 ≈ 6.3 s).
 - **Containerizing the gateway adds no meaningful overhead.** The Docker and host numbers are
   within normal run-to-run variation, because generation happens in the model server, not the gateway.
+- **Scope.** These are single-user numbers. Concurrent load (Locust) and time to first token
+  with streaming are measured in Week 3.
 - **Cold starts matter.** The first request after the model is unloaded is noticeably slower,
   so production deployments should keep models warm (readiness checks, minimum replicas).
 
