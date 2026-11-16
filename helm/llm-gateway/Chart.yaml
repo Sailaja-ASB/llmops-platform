@@ -1,0 +1,6 @@
+apiVersion: v2
+name: llm-gateway
+description: FastAPI gateway in front of a self-hosted LLM (Ollama)
+type: application
+version: 0.2.0        # chart version
+appVersion: "0.2.0"   # gateway image version

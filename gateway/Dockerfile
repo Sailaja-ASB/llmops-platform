@@ -8,9 +8,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 
-# Run as a non-root user (good practice for Kubernetes)
-RUN useradd -m appuser
-USER appuser
+# Non-root user (Kubernetes securityContext also enforces this)
+RUN useradd -m -u 10001 appuser
+USER 10001
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --timeout-graceful-shutdown lets in-flight requests finish when Kubernetes stops the pod
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "20"]

@@ -6,7 +6,7 @@ Uses only the Python standard library (nothing to install).
 
 Usage:
     python3 benchmark.py                      # gateway on localhost:8001, 20 requests
-    python3 benchmark.py --url http://localhost:8000 --n 30
+    python3 benchmark.py --url http://localhost:8080 --api-key YOUR_KEY
 """
 import argparse
 import csv
@@ -32,10 +32,10 @@ def percentile(values, p):
     return ordered[rank - 1]
 
 
-def call(url, prompt, max_tokens):
+def call(url, prompt, max_tokens, api_key=""):
     body = json.dumps({"prompt": prompt, "max_tokens": max_tokens}).encode()
     req = urllib.request.Request(
-        f"{url}/v1/generate", data=body, headers={"Content-Type": "application/json"}
+        f"{url}/v1/generate", data=body, headers={"Content-Type": "application/json", **({"X-API-Key": api_key} if api_key else {})}
     )
     start = time.perf_counter()
     with urllib.request.urlopen(req, timeout=300) as resp:
@@ -49,16 +49,17 @@ def main():
     ap.add_argument("--url", default="http://localhost:8001")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--max-tokens", type=int, default=80)
+    ap.add_argument("--api-key", default="", help="X-API-Key header (Week 2 gateway)")
     args = ap.parse_args()
 
     print(f"Warm-up request (loads the model, not counted)...")
-    warm = call(args.url, "Say hello.", 10)
+    warm = call(args.url, "Say hello.", 10, args.api_key)
     print(f"  model = {warm.get('model')}, cold latency = {warm['client_latency_s']:.2f}s\n")
 
     rows = []
     for i in range(args.n):
         prompt = PROMPTS[i % len(PROMPTS)]
-        r = call(args.url, prompt, args.max_tokens)
+        r = call(args.url, prompt, args.max_tokens, args.api_key)
         rows.append(r)
         print(f"[{i + 1:>2}/{args.n}] {r['client_latency_s']:.2f}s  "
               f"{r.get('output_tokens', 0)} tokens  {r.get('tokens_per_s', 0):.1f} tok/s")
