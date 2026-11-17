@@ -62,8 +62,10 @@ Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/
 | Helm charts | `helm lint` and rendered manifests validated against the Kubernetes schema (`kubeconform -strict`) |
 | Gateway image + smoke test | the real image starts with no model and passes [8 checks](ci/smoke_gateway.sh): health, readiness 503, version, auth 401, injection blocked 400, quoted attack allowed, validation 422, metrics |
 | RAG image + retrieval gate | the real RAG image, started with the Helm chart's settings, must reach **Top-1 ≥ 95%** on the 47-question benchmark in the mode it ships with |
+| LLM answer gate (qwen2.5:3b) | Ollama + RAG service + gateway run together with the charts' settings; on 12 of the 47 questions (all 4 types, temperature 0) the **model itself** must cite the expected source in ≥ 90% of answers, invent no citations and refuse at most once |
 
-A quality gate on generated answers (citation accuracy with the real model) is added next.
+Jobs are staged: cheap checks first, the expensive LLM gate only after everything else passed.
+All jobs are required status checks on `main` (branch ruleset), so a change that fails a gate cannot be merged.
 
 ## Tech stack
 

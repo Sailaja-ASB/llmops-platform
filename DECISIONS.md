@@ -2,6 +2,16 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D22 – An LLM answer gate on a sample, judged on what the model wrote (Week 5)
+**Decision:** CI runs the real model (qwen2.5:3b on Ollama), the RAG service and the gateway together with the
+Helm charts' settings, asks 12 of the 47 questions (every 4th: all 4 question types) at temperature 0, and fails if
+the model itself cites the expected source in < 90% of answers, invents any citation, or refuses more than once.
+It runs last, only after the cheaper jobs pass.
+**Why:** prompt text is invisible to unit tests and lint; only the model's answers show a prompt regression.
+The gate scores the model before citation repair (D18), so the guardrail cannot hide a worse prompt.
+12 questions keep the job to minutes on a CPU runner; the full 47 run separately (nightly).
+Temperature 0 reduces run-to-run noise in a pass/fail decision.
+
 ## D21 – Gate the configuration that ships, not just the code (Week 5)
 **Decision:** CI starts the RAG image with `retrievalMode` and `loadReranker` read from the Helm chart's
 values, and the retrieval gate checks Top-1 of that default mode (≥ 95% on the 47 questions).

@@ -13,11 +13,17 @@ Model behaviour (what the LLM wrote) and final output (after guardrails) are rep
     python3 rag/eval/eval_ask.py --limit 10                          # deployed prompt, quick check
     python3 rag/eval/eval_ask.py --prompt-version rag-v1             # all 47 with the Day 3 prompt
     python3 rag/eval/eval_ask.py --prompt-version rag-v2             # all 47 with the Day 4 prompt
+
+As a CI quality gate (exit code 1 if any threshold is missed). Thresholds judge what the MODEL wrote,
+before any guardrail repair, so a repair can never hide a worse prompt (DECISIONS.md D18):
+    python3 rag/eval/eval_ask.py --every 4 --temperature 0 \
+        --min-model-citation-acc 0.9 --max-invented 0 --max-false-refusals 1
 """
 import argparse
 import json
 import os
 import statistics
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -42,14 +48,25 @@ def main():
     ap.add_argument("--prompt-version", choices=["rag-v1", "rag-v2"], default=None,
                     help="override the deployed prompt (A/B comparison)")
     ap.add_argument("--out", default="results")
+    ap.add_argument("--every", type=int, default=1, help="use every Nth question (CI: 4 -> 12 of 47, all 4 types)")
+    ap.add_argument("--temperature", type=float, default=None, help="override sampling temperature (CI: 0)")
+    gate = ap.add_argument_group("quality gate (any threshold given -> exit 1 if missed)")
+    gate.add_argument("--min-model-citation-acc", type=float, default=None,
+                      help="minimum share of answers where the model itself cited the expected source")
+    gate.add_argument("--max-invented", type=int, default=None, help="maximum answers with invented citation numbers")
+    gate.add_argument("--max-false-refusals", type=int, default=None,
+                      help='maximum "I don\'t know" answers (every benchmark question is answerable)')
+    gate.add_argument("--max-errors", type=int, default=0, help="maximum HTTP errors when gating")
     args = ap.parse_args()
 
-    questions = json.loads(Path(args.questions).read_text())[: args.limit]
+    questions = json.loads(Path(args.questions).read_text())[:: args.every][: args.limit]
     rows = []
     for i, q in enumerate(questions, start=1):
         payload = {"question": q["question"], "max_tokens": 160}
         if args.prompt_version:
             payload["prompt_version"] = args.prompt_version
+        if args.temperature is not None:
+            payload["temperature"] = args.temperature
         body = json.dumps(payload).encode()
         req = urllib.request.Request(f"{args.url}/v1/ask", data=body,
                                      headers={"Content-Type": "application/json", "X-API-Key": args.key})
@@ -107,8 +124,32 @@ def main():
         lines += ["", f"### Not citing the expected source ({len(misses)})", ""]
         lines += [f"- {r['id']} [{r['type']}] {r['outcome']}, retrieval_hit={r['retrieval_hit']}: "
                   f"{r['answer'][:140]!r}" for r in misses]
+    gating = any(v is not None for v in (args.min_model_citation_acc, args.max_invented, args.max_false_refusals))
+    passed = True
+    if gating:
+        checks = [("HTTP errors", len(rows) - n, args.max_errors, "max", str(len(rows) - n))]
+        if args.min_model_citation_acc is not None:
+            acc = sum(r["model_citation_correct"] for r in ok) / n if n else 0.0
+            checks.append(("Model cited the expected source", acc, args.min_model_citation_acc, "min",
+                           f"{acc:.0%} ({sum(r['model_citation_correct'] for r in ok)}/{n})"))
+        if args.max_invented is not None:
+            checks.append(("Invented citation numbers", outcomes["invalid_citation"], args.max_invented, "max",
+                           str(outcomes["invalid_citation"])))
+        if args.max_false_refusals is not None:
+            checks.append(('False "I don\'t know"', outcomes["no_answer"], args.max_false_refusals, "max",
+                           str(outcomes["no_answer"])))
+        lines += ["", "### Quality gate", "", "| | Check | Result | Threshold |", "|---|---|---|---|"]
+        for name, value, limit, kind, shown in checks:
+            ok_check = value >= limit if kind == "min" else value <= limit
+            passed &= ok_check
+            limit_shown = f"≥ {limit:.0%}" if kind == "min" else f"≤ {limit}"
+            lines.append(f"| {'✅' if ok_check else '❌'} | {name} | {shown} | {limit_shown} |")
+        lines += ["", "PASS: answer quality gate" if passed else "FAIL: answer quality gate"]
     report = "\n".join(lines)
     print("\n" + report)
+    if os.getenv("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+            f.write(report + "\n")
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -117,6 +158,7 @@ def main():
     (out / f"{name}.json").write_text(json.dumps(rows, indent=2))
     (out / f"{name}.md").write_text(report + "\n")
     print(f"\nSaved {out}/{name}.md")
+    sys.exit(0 if passed else 1)
 
 
 if __name__ == "__main__":

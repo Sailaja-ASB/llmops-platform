@@ -1,5 +1,8 @@
 # Runs on every push and pull request. A red check means: don't merge, don't deploy.
-# Quality gates: retrieval Top-1 of the shipped mode >= MIN_TOP1 on the 47-question benchmark.
+# Quality gates (both run the configuration from the Helm charts):
+#   retrieval: Top-1 of the shipped mode >= MIN_TOP1 on the 47-question benchmark
+#   answers:   the real model (qwen2.5:3b) must cite the expected source, invent no citations, rarely refuse
+# Order: cheap checks first, the expensive LLM gate last (only after everything else passed).
 name: CI
 
 on:
@@ -122,3 +125,80 @@ jobs:
       - name: RAG logs
         if: failure()
         run: docker logs rag
+
+  llm-answer-gate:
+    name: LLM answer gate (qwen2.5:3b)
+    needs: [gateway-image, rag-retrieval-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OLLAMA_IMAGE: ollama/ollama:0.40.16
+      MODEL: qwen2.5:3b
+      MIN_MODEL_CITATION_ACC: "0.9"  # rag-v2 on the Mac: 47/47; rag-v1: 40/47 (85%)
+      MAX_INVENTED: "0"
+      MAX_FALSE_REFUSALS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Gateway image (from cache)
+        uses: docker/build-push-action@v7
+        with:
+          context: gateway
+          load: true
+          tags: llm-gateway:ci
+          cache-from: type=gha,scope=gateway
+      - name: RAG image (from cache)
+        uses: docker/build-push-action@v7
+        with:
+          context: rag
+          load: true
+          tags: rag-service:ci
+          build-args: TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+          cache-from: type=gha,scope=rag
+      - name: Model cache
+        uses: actions/cache@v5
+        with:
+          path: ~/ollama-models
+          key: ollama-models-${{ env.MODEL }}-v1
+      - name: Start Ollama, RAG service and gateway with the Helm charts' settings
+        run: |
+          val() { sed -n "s/^ *$1: *\"\([^\"]*\)\".*/\1/p" "$2"; }
+          docker network create ci
+          mkdir -p ~/ollama-models
+          docker run -d --name ollama --network ci -v ~/ollama-models:/root/.ollama/models "$OLLAMA_IMAGE"
+          for _ in $(seq 1 30); do docker exec ollama ollama list > /dev/null 2>&1 && break; sleep 2; done
+          docker exec ollama ollama pull "$MODEL"
+          docker run -d --name rag --network ci -p 8001:8001 \
+            -e RETRIEVAL_MODE="$(val retrievalMode helm/rag-service/values.yaml)" \
+            -e LOAD_RERANKER="$(val loadReranker helm/rag-service/values.yaml)" \
+            rag-service:ci
+          docker run -d --name gw --network ci -p 8080:8000 \
+            -e API_KEYS=ci-key -e OLLAMA_URL=http://ollama:11434 -e RAG_URL=http://rag:8001 -e MODEL_NAME="$MODEL" \
+            -e RAG_PROMPT_VERSION="$(val ragPromptVersion helm/llm-gateway/values.yaml)" \
+            -e GUARDRAILS_ENABLED="$(val guardrailsEnabled helm/llm-gateway/values.yaml)" \
+            -e CITATION_REPAIR="$(val citationRepair helm/llm-gateway/values.yaml)" \
+            llm-gateway:ci
+          for _ in $(seq 1 90); do curl -sf localhost:8001/readyz > /dev/null && curl -sf localhost:8080/readyz > /dev/null && break; sleep 2; done
+          curl -sf localhost:8080/version
+      - name: Warm up the model (load into memory, not measured)
+        run: |
+          curl -sf -X POST localhost:8080/v1/generate -H "X-API-Key: ci-key" -H "Content-Type: application/json" \
+            -d '{"prompt":"Say OK.","max_tokens":5}'
+      - name: Answer quality gate (12 of 47 questions, temperature 0)
+        run: |
+          python3 rag/eval/eval_ask.py --url http://localhost:8080 --key ci-key --every 4 --temperature 0 \
+            --min-model-citation-acc "$MIN_MODEL_CITATION_ACC" --max-invented "$MAX_INVENTED" \
+            --max-false-refusals "$MAX_FALSE_REFUSALS" --out results
+      - name: Upload answers for review
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: llm-answer-eval
+          path: results/
+          if-no-files-found: ignore
+      - name: Service logs
+        if: failure()
+        run: |
+          docker logs gw --tail 80
+          docker logs rag --tail 40
+          docker logs ollama --tail 40
