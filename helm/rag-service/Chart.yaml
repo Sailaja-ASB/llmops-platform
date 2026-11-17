@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rag-service
+description: Hybrid (BM25 + dense) retrieval service for the LLMOps platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

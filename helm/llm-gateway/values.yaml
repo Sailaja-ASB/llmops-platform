@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: llm-gateway
-  tag: "0.3.1"
+  tag: "0.4.0"
   pullPolicy: IfNotPresent   # image is loaded into kind, never pulled
 
 service:
@@ -22,6 +22,9 @@ config:
   maxInflight: "8"         # generations running at once per pod; extra requests get a fast 503
   breakerThreshold: "3"
   breakerCooldownS: "15"
+  ragUrl: "http://rag-service:8001"   # Week 4: in-cluster address of the RAG retrieval service
+  ragTimeout: "10"
+  ragPromptVersion: "rag-v1"
 
 # Secret: API keys (comma-separated). Override at install time, never commit real keys.
 apiKeys: "dev-key-change-me"

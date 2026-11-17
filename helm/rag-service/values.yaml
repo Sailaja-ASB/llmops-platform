@@ -1,0 +1,41 @@
+replicaCount: 1
+
+image:
+  repository: rag-service
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent   # loaded into kind, never pulled
+
+service:
+  port: 8001   # ClusterIP only: reached by the gateway inside the cluster, not from outside
+
+config:
+  retrievalMode: "hybrid"        # dense | bm25 | hybrid | hybrid_rerank (47-question benchmark: hybrid 47/47)
+  retrievalCandidates: "10"
+  loadReranker: "true"           # loaded so hybrid_rerank can be compared; set "false" to save ~100 MB
+  torchThreads: "2"
+
+# Embedding + reranker models in memory: ~400-600 MB
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+probes:
+  # Loading models takes 5-30 s on a laptop: the startup probe gives it up to 3 minutes
+  # before liveness checks begin (Week 3 lesson: don't kill slow-but-healthy pods).
+  startup:
+    periodSeconds: 5
+    failureThreshold: 36
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readiness:
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+readOnlyRootFilesystem: true   # models are baked into the image; /tmp is a writable emptyDir

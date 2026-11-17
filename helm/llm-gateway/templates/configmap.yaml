@@ -16,3 +16,6 @@ data:
   MAX_INFLIGHT: {{ .Values.config.maxInflight | quote }}
   BREAKER_THRESHOLD: {{ .Values.config.breakerThreshold | quote }}
   BREAKER_COOLDOWN_S: {{ .Values.config.breakerCooldownS | quote }}
+  RAG_URL: {{ .Values.config.ragUrl | quote }}
+  RAG_TIMEOUT: {{ .Values.config.ragTimeout | quote }}
+  RAG_PROMPT_VERSION: {{ .Values.config.ragPromptVersion | quote }}
