@@ -48,12 +48,21 @@ from typing import Literal, Optional
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from prometheus_client import (CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, Info,
-                               generate_latest)
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, Info, generate_latest
 from pydantic import BaseModel, Field
 
-from guardrails import (NO_ANSWER, clean_refusals, detect_injection, filter_chunks, is_no_answer, parse_citations, redact,
-                        repair_citations, strip_invalid_citations, uncited_sentences)
+from guardrails import (
+    NO_ANSWER,
+    clean_refusals,
+    detect_injection,
+    filter_chunks,
+    is_no_answer,
+    parse_citations,
+    redact,
+    repair_citations,
+    strip_invalid_citations,
+    uncited_sentences,
+)
 
 # ---------- Configuration (env vars; set by ConfigMap / Secret) ----------
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -309,7 +318,8 @@ async def readyz(request: Request):
 async def version():
     return {"app_version": APP_VERSION, "model": MODEL_NAME, "prompt_version": PROMPT_VERSION,
             "rag_prompt_version": RAG_PROMPT_VERSION, "rag_url": RAG_URL, "guardrails": GUARDRAILS_ENABLED,
-            "citation_repair": CITATION_REPAIR, "breaker": breaker.state, "max_inflight": MAX_INFLIGHT, "inflight": _inflight}
+            "citation_repair": CITATION_REPAIR, "breaker": breaker.state,
+            "max_inflight": MAX_INFLIGHT, "inflight": _inflight}
 
 
 async def call_ollama(client: httpx.AsyncClient, payload: dict, rid: str) -> dict:
@@ -353,14 +363,14 @@ async def _generate(req: GenerateRequest, request: Request, rid: str):
         data = await call_ollama(request.app.state.client, payload, rid)
     except httpx.ConnectError as exc:
         REQUESTS.labels(status="error").inc()
-        raise HTTPException(status_code=503, detail=f"cannot reach model server: {exc}")
+        raise HTTPException(status_code=503, detail=f"cannot reach model server: {exc}") from exc
     except httpx.TimeoutException:
         breaker.failure()
         REQUESTS.labels(status="timeout").inc()
-        raise HTTPException(status_code=504, detail=f"model did not answer in {REQUEST_TIMEOUT}s")
+        raise HTTPException(status_code=504, detail=f"model did not answer in {REQUEST_TIMEOUT}s") from None
     except httpx.HTTPError as exc:
         REQUESTS.labels(status="error").inc()
-        raise HTTPException(status_code=502, detail=f"upstream error: {exc}")
+        raise HTTPException(status_code=502, detail=f"upstream error: {exc}") from exc
 
     latency = time.perf_counter() - start
     model_s = data.get("total_duration", 0) / 1e9      # Ollama reports nanoseconds
@@ -407,17 +417,17 @@ async def open_ollama_stream(client: httpx.AsyncClient, payload: dict) -> httpx.
             breaker.failure()
             if attempt == CONNECT_RETRIES:
                 REQUESTS.labels(status="error").inc()
-                raise HTTPException(status_code=503, detail=f"cannot reach model server: {exc}")
+                raise HTTPException(status_code=503, detail=f"cannot reach model server: {exc}") from exc
             await asyncio.sleep(0.2 * (2 ** attempt))
         except httpx.TimeoutException:
             breaker.failure()
             REQUESTS.labels(status="timeout").inc()
-            raise HTTPException(status_code=504, detail="model server timed out")
+            raise HTTPException(status_code=504, detail="model server timed out") from None
         except httpx.HTTPError as exc:
             if upstream is not None:
                 await upstream.aclose()
             REQUESTS.labels(status="error").inc()
-            raise HTTPException(status_code=502, detail=f"upstream error: {exc}")
+            raise HTTPException(status_code=502, detail=f"upstream error: {exc}") from exc
 
 
 # End of a sentence, including any citation markers right after it ("... works. [1]"),
@@ -577,7 +587,7 @@ async def retrieve(request: Request, req: AskRequest, rid: str) -> tuple[list[di
     except httpx.HTTPError as exc:
         REQUESTS.labels(status="rag_error").inc()
         log_event("rag_error", request_id=rid, error=str(exc))
-        raise HTTPException(status_code=503, detail=f"retrieval service unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=f"retrieval service unavailable: {exc}") from exc
     elapsed = time.perf_counter() - start
     RAG_RETRIEVE.observe(elapsed)
     chunks = r.json()["chunks"]

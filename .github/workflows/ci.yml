@@ -1,0 +1,90 @@
+# Runs on every push and pull request. A red check means: don't merge, don't deploy.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint, unit tests, versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install tools
+        run: pip install ruff==0.16.9 pytest==9.2.0
+      - name: Lint (ruff.toml)
+        run: ruff check --output-format github .
+      - name: Unit tests (guardrails)
+        run: python -m pytest -q gateway/tests
+      - name: Code, chart and image versions agree
+        run: python ci/check_versions.py
+
+  helm:
+    name: Helm charts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.2
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+            | tar -xz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+      - name: helm lint
+        run: |
+          helm lint helm/llm-gateway --set apiKeys=ci-key
+          helm lint helm/rag-service
+      - name: Render and validate against the Kubernetes schema
+        run: |
+          mkdir -p rendered
+          helm template llm-gateway helm/llm-gateway --set apiKeys=ci-key > rendered/gateway.yaml
+          helm template llm-gateway helm/llm-gateway --set apiKeys=ci-key --set autoscaling.enabled=true > rendered/gateway-hpa.yaml
+          helm template rag-service helm/rag-service > rendered/rag.yaml
+          kubeconform -strict -summary rendered/
+
+  gateway-image:
+    name: Gateway image + smoke test
+    needs: lint-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: gateway
+          load: true
+          tags: llm-gateway:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start the gateway (no model, no RAG service)
+        run: |
+          docker run -d --name gw -p 8000:8000 \
+            -e API_KEYS=ci-key -e OLLAMA_URL=http://127.0.0.1:9 -e RAG_URL=http://127.0.0.1:9 \
+            llm-gateway:ci
+      - name: Smoke test
+        run: |
+          VERSION=$(sed -n 's/^appVersion: *"\{0,1\}\([^" ]*\).*/\1/p' helm/llm-gateway/Chart.yaml)
+          echo "### Gateway smoke test (expected version $VERSION)" >> "$GITHUB_STEP_SUMMARY"
+          bash ci/smoke_gateway.sh http://localhost:8000 ci-key "$VERSION"
+      - name: Gateway logs
+        if: failure()
+        run: docker logs gw

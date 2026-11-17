@@ -2,6 +2,17 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D20 – Smoke-test the real image without a model (Week 5)
+**Decision:** CI starts the actual gateway container with no Ollama and no RAG service and checks only
+behaviour that must hold anyway: health, readiness 503, version, auth, input guardrail, validation, metrics.
+**Why:** fast (seconds), no model download, and it tests the image that ships, not the source tree.
+Model-dependent quality is checked by separate eval gates.
+
+## D19 – One written-down lint rule set (Week 5)
+**Decision:** ruff with E, W, F, I and B rules in `ruff.toml`; long guardrail regexes exempt from line length.
+**Why:** CI must not depend on each developer's local settings. Adding B (bugbear) found 8 places where an
+error was re-raised without its cause (`raise ... from exc`); fixed, so logs keep the original error.
+
 ## D18 – Measure model behaviour and guardrail fixes separately (Week 4 Day 4)
 **Decision:** the eval reports what the model wrote (cited, invented, uncited, refused) apart from
 the final output after guardrails (repaired citations, final citation accuracy).

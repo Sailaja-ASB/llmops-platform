@@ -123,7 +123,7 @@ def retrieve(req: RetrieveRequest, request: Request):
         chunks, timings = request.app.state.retriever.search(req.question, top_k=req.top_k, mode=mode)
     except ValueError as exc:
         RETRIEVE_REQUESTS.labels(mode=mode, status="bad_request").inc()
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     elapsed = time.perf_counter() - start
     RETRIEVE_SECONDS.labels(mode=mode).observe(elapsed)
     RETRIEVE_REQUESTS.labels(mode=mode, status="ok").inc()

@@ -1,10 +1,12 @@
 # LLMOps Platform
 
+[![CI](https://github.com/Sailaja-ASB/llmops-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Sailaja-ASB/llmops-platform/actions/workflows/ci.yml)
+
 A production-style platform for serving, scaling, grounding and guarding a self-hosted LLM,
 built one week at a time on a MacBook Air (M1, 8 GB) and measured at every step.
 
 **Status:** Weeks 1–4 complete: gateway → Kubernetes + Helm → streaming, load testing and autoscaling →
-RAG with verified citations and guardrails. Next: eval-gated CI/CD, then observability.
+RAG with verified citations and guardrails. Now: eval-gated CI/CD (GitHub Actions); then observability.
 
 ## Highlights
 
@@ -50,10 +52,22 @@ to a file and verified.
 | 3 | SSE streaming + TTFT, load shedding, Locust load tests, HPA | One Ollama instance is the bottleneck: HPA doubled pods while TTFT rose 10 s → 52 s | [WEEK3_GUIDE](WEEK3_GUIDE.md) |
 | 4 | RAG service, `/v1/ask` with verified citations, layered guardrails, red team | Perfect retrieval ≠ perfect answers: measure each stage separately | [WEEK4_GUIDE](WEEK4_GUIDE.md), [Day 4](WEEK4_DAY4_GUIDE.md) |
 
+## Continuous integration
+
+Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+
+| Job | What must pass |
+|---|---|
+| Lint, unit tests, versions | `ruff` ([ruff.toml](ruff.toml)), 32 guardrail unit tests, code version = Helm appVersion = image tag |
+| Helm charts | `helm lint` and rendered manifests validated against the Kubernetes schema (`kubeconform -strict`) |
+| Gateway image + smoke test | the real image starts with no model and passes [8 checks](ci/smoke_gateway.sh): health, readiness 503, version, auth 401, injection blocked 400, quoted attack allowed, validation 422, metrics |
+
+Quality gates on retrieval and answers are added next.
+
 ## Tech stack
 
 Python · FastAPI · httpx · Pydantic · Prometheus client · Docker · Kubernetes (kind) · Helm ·
-Locust · sentence-transformers · rank-bm25 · Ollama · Qwen2.5-3B · pytest
+Locust · sentence-transformers · rank-bm25 · Ollama · Qwen2.5-3B · pytest · GitHub Actions · ruff
 
 ## Repository layout
 
@@ -63,6 +77,7 @@ rag/            retrieval service, 18-document corpus, eval scripts (retrieval, 
 helm/           charts: llm-gateway, rag-service
 loadtest/       Locust load shapes (steps, spike, stress) + report.py
 results/        raw load-test and eval results
+ci/             version check + gateway smoke test used by GitHub Actions
 BENCHMARKS.md   every measured number, with its setup
 DECISIONS.md    D1–D18: what was decided and why
 ```

@@ -35,7 +35,8 @@ def percentile(values, p):
 def call(url, prompt, max_tokens, api_key=""):
     body = json.dumps({"prompt": prompt, "max_tokens": max_tokens}).encode()
     req = urllib.request.Request(
-        f"{url}/v1/generate", data=body, headers={"Content-Type": "application/json", **({"X-API-Key": api_key} if api_key else {})}
+        f"{url}/v1/generate", data=body,
+        headers={"Content-Type": "application/json", **({"X-API-Key": api_key} if api_key else {})}
     )
     start = time.perf_counter()
     with urllib.request.urlopen(req, timeout=300) as resp:
@@ -52,7 +53,7 @@ def main():
     ap.add_argument("--api-key", default="", help="X-API-Key header (Week 2 gateway)")
     args = ap.parse_args()
 
-    print(f"Warm-up request (loads the model, not counted)...")
+    print("Warm-up request (loads the model, not counted)...")
     warm = call(args.url, "Say hello.", 10, args.api_key)
     print(f"  model = {warm.get('model')}, cold latency = {warm['client_latency_s']:.2f}s\n")
 

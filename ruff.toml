@@ -1,0 +1,17 @@
+# Lint rules checked in CI (.github/workflows/ci.yml)
+line-length = 120
+target-version = "py39"   # eval scripts also run on the Mac's Python 3.9
+
+[lint]
+select = [
+  "E", "W",  # pycodestyle errors and warnings
+  "F",       # pyflakes: unused imports, undefined names
+  "I",       # import order
+  "B",       # bugbear: common bug patterns
+]
+
+[lint.isort]
+known-first-party = ["guardrails", "fusion", "retriever"]
+
+[lint.per-file-ignores]
+"gateway/guardrails.py" = ["E501"]   # attack patterns are long regexes; splitting them hurts readability
