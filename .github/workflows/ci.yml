@@ -1,4 +1,5 @@
 # Runs on every push and pull request. A red check means: don't merge, don't deploy.
+# Quality gates: retrieval Top-1 of the shipped mode >= MIN_TOP1 on the 47-question benchmark.
 name: CI
 
 on:
@@ -73,8 +74,8 @@ jobs:
           context: gateway
           load: true
           tags: llm-gateway:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,mode=max,scope=gateway
       - name: Start the gateway (no model, no RAG service)
         run: |
           docker run -d --name gw -p 8000:8000 \
@@ -88,3 +89,36 @@ jobs:
       - name: Gateway logs
         if: failure()
         run: docker logs gw
+
+  rag-retrieval-gate:
+    name: RAG image + retrieval gate
+    needs: lint-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MIN_TOP1: "0.95"   # 47-question benchmark; hybrid scores 47/47, dense and BM25 43/47 (91.5%)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build (CPU-only PyTorch, models baked in)
+        uses: docker/build-push-action@v7
+        with:
+          context: rag
+          load: true
+          tags: rag-service:ci
+          build-args: TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+          cache-from: type=gha,scope=rag
+          cache-to: type=gha,mode=max,scope=rag
+      - name: Start the RAG service with the Helm chart's settings
+        run: |
+          MODE=$(sed -n 's/^ *retrievalMode: *"\([^"]*\)".*/\1/p' helm/rag-service/values.yaml)
+          RERANK=$(sed -n 's/^ *loadReranker: *"\([^"]*\)".*/\1/p' helm/rag-service/values.yaml)
+          echo "From helm/rag-service/values.yaml: retrievalMode=$MODE loadReranker=$RERANK"
+          docker run -d --name rag -p 8001:8001 -e RETRIEVAL_MODE="$MODE" -e LOAD_RERANKER="$RERANK" rag-service:ci
+          for _ in $(seq 1 90); do curl -sf localhost:8001/readyz > /dev/null && break; sleep 2; done
+          curl -sf localhost:8001/info
+      - name: Retrieval gate (47 questions)
+        run: python3 rag/eval/eval_service.py --url http://localhost:8001 --min-top1 "$MIN_TOP1"
+      - name: RAG logs
+        if: failure()
+        run: docker logs rag

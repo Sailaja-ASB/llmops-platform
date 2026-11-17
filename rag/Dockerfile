@@ -4,8 +4,10 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 HF_HOME=/models
 
 # CPU-only PyTorch. On Apple Silicon (arm64) the PyPI wheel is already CPU-only (~90 MB).
-# On an x86_64 machine use: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-RUN pip install torch==2.5.1
+# On x86_64 the PyPI wheel pulls ~2.5 GB of GPU libraries, so CI builds with
+#   --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+ARG TORCH_INDEX_URL=https://pypi.org/simple
+RUN pip install torch==2.5.1 --index-url ${TORCH_INDEX_URL}
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt

@@ -2,6 +2,13 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D21 – Gate the configuration that ships, not just the code (Week 5)
+**Decision:** CI starts the RAG image with `retrievalMode` and `loadReranker` read from the Helm chart's
+values, and the retrieval gate checks Top-1 of that default mode (≥ 95% on the 47 questions).
+**Why:** quality can drop without a code change. Switching `retrievalMode` to `dense` keeps every unit test
+green but drops Top-1 from 100% to 91.5%; only a gate on the shipped config catches it.
+The CI image uses CPU-only PyTorch (a build argument), avoiding ~2.5 GB of GPU libraries on x86 runners.
+
 ## D20 – Smoke-test the real image without a model (Week 5)
 **Decision:** CI starts the actual gateway container with no Ollama and no RAG service and checks only
 behaviour that must hold anyway: health, readiness 503, version, auth, input guardrail, validation, metrics.

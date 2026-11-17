@@ -61,8 +61,9 @@ Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/
 | Lint, unit tests, versions | `ruff` ([ruff.toml](ruff.toml)), 32 guardrail unit tests, code version = Helm appVersion = image tag |
 | Helm charts | `helm lint` and rendered manifests validated against the Kubernetes schema (`kubeconform -strict`) |
 | Gateway image + smoke test | the real image starts with no model and passes [8 checks](ci/smoke_gateway.sh): health, readiness 503, version, auth 401, injection blocked 400, quoted attack allowed, validation 422, metrics |
+| RAG image + retrieval gate | the real RAG image, started with the Helm chart's settings, must reach **Top-1 ≥ 95%** on the 47-question benchmark in the mode it ships with |
 
-Quality gates on retrieval and answers are added next.
+A quality gate on generated answers (citation accuracy with the real model) is added next.
 
 ## Tech stack
 
