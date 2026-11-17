@@ -19,3 +19,5 @@ data:
   RAG_URL: {{ .Values.config.ragUrl | quote }}
   RAG_TIMEOUT: {{ .Values.config.ragTimeout | quote }}
   RAG_PROMPT_VERSION: {{ .Values.config.ragPromptVersion | quote }}
+  GUARDRAILS_ENABLED: {{ .Values.config.guardrailsEnabled | quote }}
+  CITATION_REPAIR: {{ .Values.config.citationRepair | quote }}

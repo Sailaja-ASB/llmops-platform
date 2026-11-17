@@ -2,6 +2,32 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D18 – Measure model behaviour and guardrail fixes separately (Week 4 Day 4)
+**Decision:** the eval reports what the model wrote (cited, invented, uncited, refused) apart from
+the final output after guardrails (repaired citations, final citation accuracy).
+**Why:** a guardrail that silently fixes answers can hide a model or prompt getting worse. Both numbers
+are needed: one tells you about the model, the other about what users see.
+
+## D17 – Output guardrails on streams work sentence by sentence (Week 4 Day 4)
+**Decision:** with guardrails on, /v1/ask/stream holds tokens until a sentence (and any citation after
+it) is complete, then sends the cleaned sentence: secrets redacted, invented [n] removed, citations repaired.
+**Why:** once a token is sent it cannot be taken back, so token-by-token streaming would leak a secret
+before any check runs. Cost: users see whole sentences instead of single tokens (first_text_s vs ttft_s).
+
+## D16 – Citation repair only when the words match (Week 4 Day 4)
+**Decision:** an uncited sentence gets [n] only if one retrieved chunk contains at least half of its
+content words; otherwise it stays uncited and is counted (uncited_sentences).
+**Why:** a confident wrong citation is worse than none. The repair never guesses: "RRF uses k = 60"
+stays uncited because the chunk only says "Reciprocal Rank Fusion".
+
+## D15 – Layered prompt-injection defence, pattern matching first (Week 4 Day 4)
+**Decision:** regex patterns block known attack shapes in the question (HTTP 400) and drop retrieved
+chunks that carry commands; text inside quotes is exempt; the prompt fences sources off as data.
+**Why:** cheap (<1 ms), explainable and measurable. The quote exemption came from a real false positive:
+the document that explains prompt injection was dropped for the question it answers. Known gaps
+(other languages, misspellings, rephrasing) are measured by the red-team eval; the next layer would be a
+small classifier model (e.g. Prompt Guard).
+
 ## D14 – Keep /v1/generate working when retrieval is down (Week 4)
 **Decision:** gateway readiness depends on Ollama only. If the RAG service is unreachable, /v1/ask
 returns a fast 503 ("retrieval service unavailable") and /v1/generate keeps working.

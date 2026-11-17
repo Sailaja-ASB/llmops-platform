@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: llm-gateway
-  tag: "0.4.0"
+  tag: "0.5.0"
   pullPolicy: IfNotPresent   # image is loaded into kind, never pulled
 
 service:
@@ -24,7 +24,9 @@ config:
   breakerCooldownS: "15"
   ragUrl: "http://rag-service:8001"   # Week 4: in-cluster address of the RAG retrieval service
   ragTimeout: "10"
-  ragPromptVersion: "rag-v1"
+  ragPromptVersion: "rag-v2"      # Day 4 prompt; rag-v1 still selectable per request for A/B evals
+  guardrailsEnabled: "true"       # input injection check, context filter, output redaction + citation checks
+  citationRepair: "true"          # attach a citation to clearly supported uncited sentences
 
 # Secret: API keys (comma-separated). Override at install time, never commit real keys.
 apiKeys: "dev-key-change-me"
