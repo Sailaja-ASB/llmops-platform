@@ -9,7 +9,7 @@ service:
   port: 8001   # ClusterIP only: reached by the gateway inside the cluster, not from outside
 
 config:
-  retrievalMode: "hybrid"        # dense | bm25 | hybrid | hybrid_rerank (47-question benchmark: hybrid 47/47)
+  retrievalMode: "dense"        # dense | bm25 | hybrid | hybrid_rerank (47-question benchmark: hybrid 47/47)
   retrievalCandidates: "10"
   loadReranker: "true"           # loaded so hybrid_rerank can be compared; set "false" to save ~100 MB
   torchThreads: "2"
