@@ -13,5 +13,6 @@ RUN useradd -m -u 10001 appuser
 USER 10001
 
 EXPOSE 8000
-# --timeout-graceful-shutdown lets in-flight requests finish when Kubernetes stops the pod
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "20"]
+# --no-access-log: our JSON logs already record every request
+# --timeout-graceful-shutdown: let in-flight streams (up to ~50 s under load) finish when a pod stops
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "60", "--no-access-log"]

@@ -1,6 +1,12 @@
-"""LLM Gateway - Week 2 of the LLMOps platform.
+"""LLM Gateway - Week 3 of the LLMOps platform.
 
-Adds production reliability on top of Week 1:
+Week 3 adds:
+  - POST /v1/generate/stream: Server-Sent Events (token-by-token streaming)
+  - time to first token (TTFT) metric
+  - in-flight request limit per pod (load shedding: fast 503 instead of piling up)
+  - llm_inflight_requests gauge (what is running right now)
+
+Week 2 added production reliability on top of Week 1:
   - configuration from environment (ConfigMap / Secret in Kubernetes)
   - /version endpoint with model, prompt and app versions
   - structured JSON logs with a request ID on every request
@@ -23,8 +29,8 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
-from prometheus_client import (CONTENT_TYPE_LATEST, Counter, Histogram, Info,
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from prometheus_client import (CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, Info,
                                generate_latest)
 from pydantic import BaseModel, Field
 
@@ -32,7 +38,7 @@ from pydantic import BaseModel, Field
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:3b")
 PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
-APP_VERSION = os.getenv("APP_VERSION", "0.2.0")
+APP_VERSION = os.getenv("APP_VERSION", "0.3.1")
 CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "3"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
 MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "32768"))
@@ -40,6 +46,10 @@ CONNECT_RETRIES = int(os.getenv("CONNECT_RETRIES", "2"))
 BREAKER_THRESHOLD = int(os.getenv("BREAKER_THRESHOLD", "3"))
 BREAKER_COOLDOWN_S = float(os.getenv("BREAKER_COOLDOWN_S", "15"))
 RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "60"))
+# Max generations running at once in this pod. Extra requests get a fast 503.
+MAX_INFLIGHT = int(os.getenv("MAX_INFLIGHT", "8"))
+# Reuse the last Ollama readiness result for this many seconds (fewer probe calls under load)
+READY_CACHE_S = float(os.getenv("READY_CACHE_S", "10"))
 # Comma-separated keys. Empty = auth disabled (handy for local runs).
 API_KEYS = {k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()}
 
@@ -83,6 +93,10 @@ TOKENS_OUT = Counter("llm_output_tokens_total", "Generated tokens")
 TOKENS_PER_SEC = Histogram("llm_tokens_per_second", "Generation throughput per request",
                            buckets=(1, 5, 10, 20, 40, 80, 160))
 BREAKER_OPEN = Counter("llm_breaker_rejections_total", "Requests rejected while breaker open")
+TTFT = Histogram("llm_time_to_first_token_seconds", "Time until the first streamed token",
+                 buckets=(0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 32))
+INFLIGHT = Gauge("llm_inflight_requests", "Generations running right now in this pod")
+SHED = Counter("llm_load_shed_total", "Requests rejected because the pod was at MAX_INFLIGHT")
 BUILD = Info("llm_gateway_build", "Deployed versions")
 BUILD.info({"app_version": APP_VERSION, "model": MODEL_NAME, "prompt_version": PROMPT_VERSION})
 
@@ -130,6 +144,32 @@ def rate_limited(key: str) -> bool:
     window.append(now)
     _windows[key] = window
     return False
+
+
+# ---------- In-flight limit (load shedding) ----------
+_inflight = 0
+
+
+def try_acquire() -> bool:
+    """Single-threaded event loop, so a plain counter is safe here."""
+    global _inflight
+    if _inflight >= MAX_INFLIGHT:
+        return False
+    _inflight += 1
+    INFLIGHT.set(_inflight)
+    return True
+
+
+def release():
+    global _inflight
+    _inflight = max(_inflight - 1, 0)
+    INFLIGHT.set(_inflight)
+
+
+def overloaded():
+    SHED.inc()
+    REQUESTS.labels(status="overloaded").inc()
+    return HTTPException(status_code=503, detail=f"gateway busy ({MAX_INFLIGHT} requests in flight), retry later")
 
 
 # ---------- App + shared HTTP client ----------
@@ -205,24 +245,36 @@ async def healthz():
     return {"status": "ok"}
 
 
+_ready = {"ok": False, "at": float("-inf"), "detail": ""}
+
+
 @app.get("/readyz")
 async def readyz(request: Request):
-    """Readiness: can we serve right now (Ollama reachable, breaker not open)?"""
+    """Readiness: can we serve right now (Ollama reachable, breaker not open)?
+
+    The Ollama check is cached for READY_CACHE_S seconds so that, under heavy load,
+    every probe doesn't add another call to a busy model server.
+    """
     if not breaker.allow():
         raise HTTPException(status_code=503, detail="circuit breaker open")
-    try:
-        r = await request.app.state.client.get("/api/tags", timeout=5)
-        r.raise_for_status()
-        breaker.success()  # model server is back: close the breaker
-        return {"status": "ready", "model": MODEL_NAME}
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail=f"model server not ready: {exc}")
+    now = time.monotonic()
+    if now - _ready["at"] >= READY_CACHE_S:
+        try:
+            r = await request.app.state.client.get("/api/tags", timeout=2)
+            r.raise_for_status()
+            breaker.success()  # model server is back: close the breaker
+            _ready.update(ok=True, at=now, detail="")
+        except httpx.HTTPError as exc:
+            _ready.update(ok=False, at=now, detail=f"model server not ready: {exc}")
+    if not _ready["ok"]:
+        raise HTTPException(status_code=503, detail=_ready["detail"])
+    return {"status": "ready", "model": MODEL_NAME}
 
 
 @app.get("/version")
 async def version():
-    return {"app_version": APP_VERSION, "model": MODEL_NAME,
-            "prompt_version": PROMPT_VERSION, "breaker": breaker.state}
+    return {"app_version": APP_VERSION, "model": MODEL_NAME, "prompt_version": PROMPT_VERSION,
+            "breaker": breaker.state, "max_inflight": MAX_INFLIGHT, "inflight": _inflight}
 
 
 async def call_ollama(client: httpx.AsyncClient, payload: dict, rid: str) -> dict:
@@ -250,6 +302,15 @@ async def generate(req: GenerateRequest, request: Request):
         REQUESTS.labels(status="rejected").inc()
         raise HTTPException(status_code=503, detail="model server unavailable (breaker open)")
 
+    if not try_acquire():
+        raise overloaded()
+    try:
+        return await _generate(req, request, rid)
+    finally:
+        release()
+
+
+async def _generate(req: GenerateRequest, request: Request, rid: str):
     payload = {"model": MODEL_NAME, "prompt": req.prompt, "stream": False,
                "options": {"num_predict": req.max_tokens, "temperature": req.temperature}}
     start = time.perf_counter()
@@ -287,6 +348,105 @@ async def generate(req: GenerateRequest, request: Request):
                             output=data.get("response", ""), input_tokens=in_tokens,
                             output_tokens=out_tokens, latency_s=round(latency, 3),
                             model_s=round(model_s, 3), tokens_per_s=round(tps, 2))
+
+
+def sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+@app.post("/v1/generate/stream")
+async def generate_stream(req: GenerateRequest, request: Request):
+    """Stream tokens as Server-Sent Events.
+
+    Events: {"token": "..."} for each chunk, then one final
+    {"done": true, "ttft_s": ..., "latency_s": ..., ...}. Errors before the
+    stream starts are normal HTTP errors (503/504); errors after it starts
+    arrive as {"error": "..."} because the 200 status is already sent.
+    """
+    rid = request.state.request_id
+    if not breaker.allow():
+        BREAKER_OPEN.inc()
+        REQUESTS.labels(status="rejected").inc()
+        raise HTTPException(status_code=503, detail="model server unavailable (breaker open)")
+    if not try_acquire():
+        raise overloaded()
+
+    client = request.app.state.client
+    payload = {"model": MODEL_NAME, "prompt": req.prompt, "stream": True,
+               "options": {"num_predict": req.max_tokens, "temperature": req.temperature}}
+    start = time.perf_counter()
+    upstream = None
+    for attempt in range(CONNECT_RETRIES + 1):        # connect-only retries, as in /v1/generate
+        try:
+            upstream = await client.send(client.build_request("POST", "/api/generate", json=payload),
+                                         stream=True)
+            upstream.raise_for_status()
+            break
+        except httpx.ConnectError as exc:
+            breaker.failure()
+            if attempt == CONNECT_RETRIES:
+                release()
+                REQUESTS.labels(status="error").inc()
+                raise HTTPException(status_code=503, detail=f"cannot reach model server: {exc}")
+            await asyncio.sleep(0.2 * (2 ** attempt))
+        except httpx.TimeoutException:
+            release()
+            breaker.failure()
+            REQUESTS.labels(status="timeout").inc()
+            raise HTTPException(status_code=504, detail="model server timed out")
+        except httpx.HTTPError as exc:
+            release()
+            if upstream is not None:
+                await upstream.aclose()
+            REQUESTS.labels(status="error").inc()
+            raise HTTPException(status_code=502, detail=f"upstream error: {exc}")
+    breaker.success()
+
+    async def events():
+        ttft = None
+        final = {}
+        try:
+            async for line in upstream.aiter_lines():
+                if not line.strip():
+                    continue
+                chunk = json.loads(line)
+                token = chunk.get("response", "")
+                if token and ttft is None:
+                    ttft = time.perf_counter() - start
+                    TTFT.observe(ttft)
+                if token:
+                    yield sse({"token": token})
+                if chunk.get("done"):
+                    final = chunk
+            latency = time.perf_counter() - start
+            model_s = final.get("total_duration", 0) / 1e9
+            eval_s = final.get("eval_duration", 0) / 1e9
+            in_tokens = int(final.get("prompt_eval_count", 0))
+            out_tokens = int(final.get("eval_count", 0))
+            tps = out_tokens / eval_s if eval_s > 0 else 0.0
+            REQUESTS.labels(status="ok").inc()
+            LATENCY.observe(latency)
+            MODEL_TIME.observe(model_s)
+            OVERHEAD.observe(max(latency - model_s, 0))
+            TOKENS_IN.inc(in_tokens)
+            TOKENS_OUT.inc(out_tokens)
+            TOKENS_PER_SEC.observe(tps)
+            log_event("generate_stream", request_id=rid, model=MODEL_NAME, input_tokens=in_tokens,
+                      output_tokens=out_tokens, ttft_s=round(ttft or 0, 3), latency_s=round(latency, 3))
+            yield sse({"done": True, "request_id": rid, "model": MODEL_NAME,
+                       "prompt_version": PROMPT_VERSION, "ttft_s": round(ttft or 0, 3),
+                       "latency_s": round(latency, 3), "input_tokens": in_tokens,
+                       "output_tokens": out_tokens, "tokens_per_s": round(tps, 2)})
+        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+            REQUESTS.labels(status="error").inc()
+            log_event("stream_error", request_id=rid, error=str(exc))
+            yield sse({"error": "stream interrupted", "request_id": rid})
+        finally:
+            await upstream.aclose()
+            release()
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/metrics")

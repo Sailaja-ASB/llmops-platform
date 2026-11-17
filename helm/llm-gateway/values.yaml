@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: llm-gateway
-  tag: "0.2"
+  tag: "0.3.1"
   pullPolicy: IfNotPresent   # image is loaded into kind, never pulled
 
 service:
@@ -18,7 +18,8 @@ config:
   connectTimeout: "3"
   requestTimeout: "120"
   maxBodyBytes: "32768"
-  rateLimitPerMin: "60"
+  rateLimitPerMin: "600"   # per key, per pod; raised so load tests measure the model, not the limiter
+  maxInflight: "8"         # generations running at once per pod; extra requests get a fast 503
   breakerThreshold: "3"
   breakerCooldownS: "15"
 
@@ -33,15 +34,30 @@ resources:
     cpu: 500m
     memory: 256Mi
 
+# Week 3 lesson: under load on an 8 GB Mac, 1 s probe timeouts restarted healthy pods.
+# Liveness is lenient (restart only if truly stuck ~1 min); readiness reacts faster.
 probes:
   liveness:
     path: /healthz
     periodSeconds: 10
-    failureThreshold: 3
+    timeoutSeconds: 5
+    failureThreshold: 6
   readiness:
     path: /readyz
     periodSeconds: 5
-    failureThreshold: 2
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Graceful shutdown: longer than the longest stream, so scale-down doesn't cut answers
+terminationGracePeriodSeconds: 90
+preStopSleepSeconds: 5   # let the Service stop routing to the pod before it shuts down
+
+# CPU-based Horizontal Pod Autoscaler (needs metrics-server in the cluster)
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 50   # % of the CPU *request* (100m)
 
 strategy:
   maxUnavailable: 0   # never drop below desired replicas during a rollout

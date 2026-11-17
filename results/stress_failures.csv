@@ -1,0 +1,4 @@
+Method,Name,Error,Occurrences
+POST,stream open,CatchResponseError('HTTP 500'),3
+POST,stream open,CatchResponseError('HTTP 0'),11
+POST,stream open,CatchResponseError('HTTP 503'),30

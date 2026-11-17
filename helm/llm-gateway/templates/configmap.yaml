@@ -13,5 +13,6 @@ data:
   REQUEST_TIMEOUT: {{ .Values.config.requestTimeout | quote }}
   MAX_BODY_BYTES: {{ .Values.config.maxBodyBytes | quote }}
   RATE_LIMIT_PER_MIN: {{ .Values.config.rateLimitPerMin | quote }}
+  MAX_INFLIGHT: {{ .Values.config.maxInflight | quote }}
   BREAKER_THRESHOLD: {{ .Values.config.breakerThreshold | quote }}
   BREAKER_COOLDOWN_S: {{ .Values.config.breakerCooldownS | quote }}

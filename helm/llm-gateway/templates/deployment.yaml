@@ -5,7 +5,9 @@ metadata:
   labels:
     app: {{ .Release.Name }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}   # with autoscaling on, the HPA owns the replica count
+  {{- end }}
   revisionHistoryLimit: 5
   strategy:
     type: RollingUpdate
@@ -26,7 +28,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
-      terminationGracePeriodSeconds: 30
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -49,6 +51,7 @@ spec:
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           readinessProbe:
             httpGet:
@@ -56,7 +59,12 @@ spec:
               port: 8000
             initialDelaySeconds: 3
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.preStopSleepSeconds }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

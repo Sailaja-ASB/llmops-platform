@@ -2,6 +2,31 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D9 – Lenient liveness, cached readiness, long grace period (Week 3 fix)
+**Decision:** liveness timeout 5 s / 6 failures; readiness timeout 3 s with a 10 s cached Ollama
+check; 90 s termination grace, 60 s uvicorn graceful shutdown and a 5 s preStop sleep; HPA waits
+3 minutes before scaling down.
+**Why:** in the 20-user stress test, 1 s probe timeouts on a CPU-starved Mac made Kubernetes restart
+pods that were slow but healthy, and an HPA scale-down killed a pod mid-stream. Both cut active
+answers (HTTP 0 / 500). A probe should only restart a pod that is truly stuck, and shutdown must
+outlast the longest stream.
+
+## D8 – CPU-based HPA first, KEDA later (Week 3)
+**Decision:** start with a CPU HPA (target 50%, 2–5 pods) and measure whether it reacts.
+**Why:** it's the standard first step, but an LLM gateway mostly *waits* on the model, so CPU may
+stay low under heavy load. If so, scale on in-flight requests or queue depth (KEDA) instead.
+
+## D7 – Load shedding with MAX_INFLIGHT (Week 3)
+**Decision:** each pod runs at most MAX_INFLIGHT generations; extra requests get a fast 503.
+**Why:** an unbounded queue turns overload into minutes of waiting for everyone. A fast,
+clear error lets clients retry or fall back, and keeps latency predictable for accepted requests.
+
+## D6 – Stream tokens with Server-Sent Events (Week 3)
+**Decision:** add POST /v1/generate/stream using SSE; keep /v1/generate for simple clients.
+**Why:** time to first token is what users feel. SSE is plain HTTP, works through proxies and
+is the same pattern most LLM APIs use. Errors after the stream starts are sent as an event,
+because the 200 status is already on the wire.
+
 ## D5 – Retry only on connection errors (Week 2)
 **Decision:** retry up to 2 times with exponential backoff only when the gateway cannot connect to Ollama.
 **Why:** retrying a slow generation doubles load exactly when the model server is struggling.
