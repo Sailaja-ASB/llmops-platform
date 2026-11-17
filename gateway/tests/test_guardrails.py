@@ -7,7 +7,7 @@ import pytest
 GATEWAY = Path(__file__).resolve().parent.parent
 RAG_DOCS = GATEWAY.parent / "rag" / "docs"
 sys.path.insert(0, str(GATEWAY))
-from guardrails import (detect_injection, filter_chunks, parse_citations, redact,  # noqa: E402
+from guardrails import (NO_ANSWER, clean_refusals, detect_injection, filter_chunks, parse_citations, redact,  # noqa: E402
                         repair_citations, strip_invalid_citations)
 
 ATTACKS = [
@@ -118,3 +118,16 @@ def test_repair_does_not_guess_without_word_overlap():
     # "RRF" never appears in the chunk (it says "Reciprocal Rank Fusion"): stay uncited rather than guess.
     fixed, added = repair_citations("RRF uses k = 60.", CHUNKS)
     assert added == [] and "[" not in fixed
+
+
+@pytest.mark.parametrize("raw", ["I don't know based on the provided documents. [1]",
+                                 "I don't know based on the provided documents [1]."])
+def test_refusal_loses_its_citation(raw):
+    # Seen live on 0.5.0: rag-v2's "cite every sentence" rule made the model cite its refusal.
+    fixed, removed = clean_refusals(raw)
+    assert fixed == NO_ANSWER and removed == 1
+
+
+def test_real_answer_mentioning_refusal_is_kept():
+    text = "The system replies 'I don't know' when retrieval finds nothing relevant [1]."
+    assert clean_refusals(text) == (text, 0)

@@ -1,5 +1,7 @@
 """LLM Gateway - Week 4 of the LLMOps platform.
 
+0.5.1: a refusal ("I don't know based on the provided documents.") never carries a citation.
+
 Week 4 Day 4 adds guardrails (guardrails.py) to the RAG endpoints:
   - input: prompt-injection attempts are blocked with HTTP 400 before retrieval or generation
   - context: retrieved chunks containing injected instructions are dropped
@@ -50,14 +52,14 @@ from prometheus_client import (CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, I
                                generate_latest)
 from pydantic import BaseModel, Field
 
-from guardrails import (NO_ANSWER, detect_injection, filter_chunks, is_no_answer, parse_citations, redact,
+from guardrails import (NO_ANSWER, clean_refusals, detect_injection, filter_chunks, is_no_answer, parse_citations, redact,
                         repair_citations, strip_invalid_citations, uncited_sentences)
 
 # ---------- Configuration (env vars; set by ConfigMap / Secret) ----------
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:3b")
 PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
-APP_VERSION = os.getenv("APP_VERSION", "0.5.0")
+APP_VERSION = os.getenv("APP_VERSION", "0.5.1")
 CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "3"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
 MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "32768"))
@@ -629,6 +631,9 @@ def make_cleaner(chunks: list[dict], stats: dict):
     def clean(text: str) -> str:
         if not GUARDRAILS_ENABLED:
             return text
+        text, refusal_cites = clean_refusals(text)  # a refusal never carries a citation (0.5.1)
+        if refusal_cites:
+            GUARD_BLOCKS.labels(stage="output", reason="refusal_citation").inc()
         _, invalid = parse_citations(text, chunks)
         if invalid:
             text = strip_invalid_citations(text, invalid)

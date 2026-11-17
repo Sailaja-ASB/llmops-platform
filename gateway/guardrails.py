@@ -135,6 +135,26 @@ def is_no_answer(answer: str) -> bool:
     return NO_ANSWER.lower().rstrip(".") in answer.lower()
 
 
+def _bare(text: str) -> str:
+    return re.sub(r"[\s.]+", " ", _CITE_RE.sub("", text)).strip().lower()
+
+
+def clean_refusals(text: str) -> tuple[str, int]:
+    """A refusal cites nothing: "I don't know based on the provided documents. [1]" becomes the plain
+    refusal. Only a sentence that is exactly the refusal is touched, so a real answer is never wiped.
+    Returns (text, citations removed)."""
+    target = _bare(NO_ANSWER)
+    out, removed = [], 0
+    for piece in split_sentences(text):
+        if _bare(piece) == target and _CITE_RE.search(piece):
+            lead = piece[: len(piece) - len(piece.lstrip())]
+            out.append(lead + NO_ANSWER)
+            removed += 1
+        else:
+            out.append(piece)
+    return "".join(out), removed
+
+
 # ---------- Output redaction ----------
 _REDACT = [
     ("api_key", re.compile(r"\b(sk|pk|rk)-[A-Za-z0-9_\-]{12,}\b")),
