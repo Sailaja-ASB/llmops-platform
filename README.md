@@ -1,110 +1,116 @@
 # LLMOps Platform
 
-A production-style platform for serving, observing and scaling a self-hosted LLM.
-Built step by step: gateway → containers → Kubernetes → autoscaling → RAG → eval-gated CI/CD → dashboards.
+A production-style platform for serving, scaling, grounding and guarding a self-hosted LLM,
+built one week at a time on a MacBook Air (M1, 8 GB) and measured at every step.
 
-**Status:** Week 1 complete (LLM gateway, Docker, metrics, benchmark). Kubernetes is next.
+**Status:** Weeks 1–4 complete: gateway → Kubernetes + Helm → streaming, load testing and autoscaling →
+RAG with verified citations and guardrails. Next: eval-gated CI/CD, then observability.
 
-📖 **Write-up:** [LLMOps Platform, Week 1: Building an LLM Gateway with FastAPI, Docker and Prometheus](https://medium.com/@morrennagarisailaja/llmops-platform-week-1-building-an-llm-gateway-with-fastapi-docker-and-prometheus-9e62974db1a3)
+## Highlights
 
-## Architecture (Week 1)
+| Result | Number |
+|---|---|
+| Hybrid retrieval (BM25 + dense, RRF) on a 47-question benchmark | **47/47 Top-1**, vs 43/47 for either method alone |
+| Citation accuracy after a prompt change (rag-v1 → rag-v2) | **40/47 → 47/47**, false "I don't know" 4 → 0 |
+| Red-team attacks that succeeded end to end | **0 of 12**, with 0 of 8 real questions wrongly blocked |
+| Stress-test errors after fixing probes and graceful shutdown | **30% → 0%** |
+| Streaming: perceived latency (time to first token, warm) | **3.3 s → 0.2 s** |
+
+Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (18 decisions)
+
+## Architecture
 
 ```
-client ──► FastAPI gateway (Docker, :8000) ──► Ollama model server (:11434, qwen2.5:3b)
-                 │
-                 ├── /healthz  /readyz   (liveness & readiness probes)
-                 └── /metrics            (Prometheus: latency, tokens/sec, request counts)
+                      Kubernetes (kind)
+             ┌───────────────────────────────────────────────┐
+client ──►   │  llm-gateway (FastAPI, 2+ pods, HPA)           │
+NodePort     │   • API keys, rate limits, load shedding       │
+:8080        │   • circuit breaker, connect-only retries      │
+             │   • guardrails: input, context, output, stream │──► Ollama on the Mac
+             │   • /v1/generate[/stream], /v1/ask[/stream]    │    qwen2.5:3b
+             │   • /metrics (Prometheus), /healthz, /readyz   │
+             │           │                                    │
+             │           ▼ X-Request-ID                       │
+             │  rag-service (FastAPI, ClusterIP :8001)        │
+             │   • hybrid search: BM25 + MiniLM, RRF          │
+             │   • optional cross-encoder reranker            │
+             └───────────────────────────────────────────────┘
 ```
 
-The gateway gives every app one stable API (`/v1/generate`), so the model behind it can be
-swapped or scaled without changing clients. It also exposes health probes for Kubernetes
-and Prometheus metrics for monitoring.
+A question to `/v1/ask` is checked by the input guardrail, sent to rag-service for the top 3 chunks,
+answered by the model from numbered sources only, and returned with every `[n]` citation mapped back
+to a file and verified.
+
+## Week by week
+
+| Week | Built | Key lesson | Guide |
+|---|---|---|---|
+| 1 | FastAPI gateway, Prometheus metrics, Docker, p50/p95 benchmark | Output length drives tail latency; Docker added no measurable overhead | [Medium](https://medium.com/@morrennagarisailaja/llmops-platform-week-1-building-an-llm-gateway-with-fastapi-docker-and-prometheus-9e62974db1a3) |
+| 2 | Kubernetes (kind) + Helm, probes, ConfigMap/Secret, API keys, rate limits, circuit breaker | Liveness must never depend on the model; gateway overhead ~50 ms | [WEEK2_GUIDE](WEEK2_GUIDE.md) |
+| 3 | SSE streaming + TTFT, load shedding, Locust load tests, HPA | One Ollama instance is the bottleneck: HPA doubled pods while TTFT rose 10 s → 52 s | [WEEK3_GUIDE](WEEK3_GUIDE.md) |
+| 4 | RAG service, `/v1/ask` with verified citations, layered guardrails, red team | Perfect retrieval ≠ perfect answers: measure each stage separately | [WEEK4_GUIDE](WEEK4_GUIDE.md), [Day 4](WEEK4_DAY4_GUIDE.md) |
 
 ## Tech stack
-Python · FastAPI · httpx · Prometheus client · Docker · Ollama · Qwen2.5-3B
 
-## Benchmark results (Week 1)
+Python · FastAPI · httpx · Pydantic · Prometheus client · Docker · Kubernetes (kind) · Helm ·
+Locust · sentence-transformers · rank-bm25 · Ollama · Qwen2.5-3B · pytest
 
-Measured with [`benchmark.py`](benchmark.py); the first (warm-up) request is excluded.
+## Repository layout
 
-**Setup**
-
-| | |
-|---|---|
-| Hardware | MacBook Air, Apple M1 (2020), 8 GB unified memory |
-| Model | `qwen2.5:3b` via Ollama (default 4-bit quantization), running natively on macOS |
-| Concurrency | 1 (20 sequential requests, no parallel load) |
-| Input | 5 short, one-sentence prompts, rotated |
-| Output | `max_tokens=80`, temperature 0.2; mean output 40 tokens (range 19–80) |
-| Latency | End-to-end, measured at the client: full non-streaming response, not time to first token |
-| Throughput | Generation tokens/s from Ollama's `eval_duration` (excludes prompt processing) |
-
-| Metric | Gateway in Docker | Gateway on host |
-|---|---|---|
-| p50 latency | 2.54 s | 2.36 s |
-| p95 latency | 6.65 s | 7.01 s |
-| Mean latency | 3.36 s | 3.31 s |
-| Mean throughput | 12.8 tokens/s | 13.0 tokens/s |
-| Mean output length | 40 tokens | 40 tokens |
-| Cold start (model load) | 5.76 s | 1.65 s* |
-
-\*The model was already loaded in memory from the previous run.
-
-**Findings**
-- **Output length drives tail latency.** Every request above 6 s hit the 80-token limit, while
-  20-token answers finished in under 2 s. Latency ≈ output tokens ÷ throughput (80 ÷ 12.8 ≈ 6.3 s).
-- **Containerizing the gateway adds no meaningful overhead.** The Docker and host numbers are
-  within normal run-to-run variation, because generation happens in the model server, not the gateway.
-- **Scope.** These are single-user numbers. Concurrent load (Locust) and time to first token
-  with streaming are measured in Week 3.
-- **Cold starts matter.** The first request after the model is unloaded is noticeably slower,
-  so production deployments should keep models warm (readiness checks, minimum replicas).
+```
+gateway/        FastAPI gateway, guardrails.py, unit tests (32)
+rag/            retrieval service, 18-document corpus, eval scripts (retrieval, answers, red team)
+helm/           charts: llm-gateway, rag-service
+loadtest/       Locust load shapes (steps, spike, stress) + report.py
+results/        raw load-test and eval results
+BENCHMARKS.md   every measured number, with its setup
+DECISIONS.md    D1–D18: what was decided and why
+```
 
 ## Run it yourself
 
-**1. Model server**
+Requirements: Docker, kind, kubectl, Helm, Ollama with `qwen2.5:3b` pulled.
+
 ```bash
-ollama pull qwen2.5:3b
+# 1. Cluster and images
+kind create cluster --config kind-config.yaml
+docker build -t llm-gateway:0.5.1 gateway/
+docker build -t rag-service:0.1.0 rag/          # first build ~5-10 min (PyTorch + models)
+kind load docker-image llm-gateway:0.5.1 --name llmops
+kind load docker-image rag-service:0.1.0 --name llmops
+
+# 2. Deploy
+helm upgrade --install rag-service helm/rag-service -n llmops --create-namespace
+helm upgrade --install llm-gateway helm/llm-gateway -n llmops --set apiKeys="sk-$(openssl rand -hex 12)"
+export KEY=$(kubectl -n llmops get secret llm-gateway-secret -o jsonpath='{.data.API_KEYS}' | base64 -d)
+
+# 3. Ask a question
+curl -s -X POST localhost:8080/v1/ask -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"question":"Why could a slow but healthy pod get restarted on a CPU-starved node?"}'
+
+# 4. Evaluate
+python3 -m pytest -q gateway/tests
+kubectl -n llmops port-forward svc/rag-service 8001:8001 &
+python3 rag/eval/eval_service.py --min-top1 0.95    # retrieval gate
+python3 rag/eval/eval_ask.py                        # answers + citations
+python3 rag/eval/eval_guardrails.py                 # red team
 ```
 
-**2. Gateway (local)**
-```bash
-cd gateway
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-MODEL_NAME=qwen2.5:3b uvicorn main:app --port 8000
-```
-
-**3. Gateway (Docker)**
-```bash
-cd gateway
-docker build -t llm-gateway:0.1 .
-docker run --rm -p 8001:8000 \
-  -e OLLAMA_URL=http://host.docker.internal:11434 \
-  -e MODEL_NAME=qwen2.5:3b llm-gateway:0.1
-```
-
-**4. Try it**
-```bash
-curl localhost:8001/healthz
-curl -X POST localhost:8001/v1/generate -H "Content-Type: application/json" \
-  -d '{"prompt": "What is Docker in one sentence?", "max_tokens": 60}'
-curl -s localhost:8001/metrics | grep llm_
-```
-Interactive API docs: http://localhost:8001/docs
-
-**5. Benchmark**
-```bash
-python3 benchmark.py --url http://localhost:8001 --n 20
-```
+Step-by-step guides with expected output: [WEEK2](WEEK2_GUIDE.md) · [WEEK3](WEEK3_GUIDE.md) · [WEEK4](WEEK4_GUIDE.md)
 
 ## Roadmap
+
 - [x] Week 1: FastAPI LLM gateway, Prometheus metrics, Docker image, latency/throughput benchmark
-- [ ] Week 2: Kubernetes (kind) + Helm chart for gateway and model server
-- [ ] Week 3: KEDA autoscaling + load testing with Locust
-- [ ] Week 4: Plug in the RAG copilot + guardrails
+- [x] Week 2: Kubernetes (kind) + Helm, probes, API keys, rate limiting, circuit breaker
+- [x] Week 3: SSE streaming, load shedding, Locust load tests, HPA (and a real probe bug fixed)
+- [x] Week 4: RAG service, verified citations, layered guardrails, red-team eval
 - [ ] Week 5: Eval-gated CI/CD with GitHub Actions
-- [ ] Week 6: Grafana dashboards + write-up
+- [ ] Week 6: Observability: Prometheus + Grafana dashboards, tracing
+
+## Related
+
+The hybrid retrieval was first built and benchmarked in
+[local-agentic-copilot](https://github.com/Sailaja-ASB/local-agentic-copilot) (`eval/BENCHMARK.md`).
 
 ## Author
 **Sailaja Morrennagari** · [Portfolio](https://sailaja-morrennagari.github.io) · [LinkedIn](https://www.linkedin.com/in/sailajamorrennagari) · [Medium](https://medium.com/@morrennagarisailaja)
