@@ -1,0 +1,27 @@
+# Prometheus reads the pod list from the Kubernetes API to find scrape targets.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-prometheus
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, endpoints]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-prometheus
+    namespace: {{ .Release.Namespace }}

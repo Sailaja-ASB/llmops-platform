@@ -39,3 +39,6 @@ probes:
     failureThreshold: 3
 
 readOnlyRootFilesystem: true   # models are baked into the image; /tmp is a writable emptyDir
+
+metrics:
+  scrape: true   # pod annotations for Prometheus service discovery (Week 6)

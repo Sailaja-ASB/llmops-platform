@@ -1,5 +1,6 @@
-"""LLM Gateway - Week 4 of the LLMOps platform.
+"""LLM Gateway - LLMOps platform.
 
+0.5.2: llm_http_requests_total{route, code} counts every response, including 401/413/429 from the edge.
 0.5.1: a refusal ("I don't know based on the provided documents.") never carries a citation.
 
 Week 4 Day 4 adds guardrails (guardrails.py) to the RAG endpoints:
@@ -68,7 +69,7 @@ from guardrails import (
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:3b")
 PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
-APP_VERSION = os.getenv("APP_VERSION", "0.5.1")
+APP_VERSION = os.getenv("APP_VERSION", "0.5.2")
 CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "3"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
 MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "32768"))
@@ -138,6 +139,11 @@ RAG_RETRIEVE = Histogram("llm_rag_retrieve_seconds", "Time to get chunks from th
 RAG_ANSWERS = Counter("llm_rag_answers_total", "RAG answers by citation outcome", ["outcome"])
 GUARD_BLOCKS = Counter("llm_guardrail_blocks_total", "Guardrail actions", ["stage", "reason"])
 BUILD = Info("llm_gateway_build", "Deployed versions")
+# Every HTTP response, including the ones the edge middleware rejects before any handler runs (401, 413, 429).
+# Without it, rate-limited and unauthenticated traffic was invisible on dashboards (found in Week 6).
+HTTP_RESPONSES = Counter("llm_http_requests_total", "HTTP responses by route and status code", ["route", "code"])
+KNOWN_ROUTES = {"/healthz", "/readyz", "/version", "/metrics", "/v1/generate", "/v1/generate/stream",
+                "/v1/ask", "/v1/ask/stream"}   # anything else is counted as "other" (bounded label values)
 BUILD.info({"app_version": APP_VERSION, "model": MODEL_NAME, "prompt_version": PROMPT_VERSION,
             "rag_prompt_version": RAG_PROMPT_VERSION})
 
@@ -256,6 +262,8 @@ async def edge(request: Request, call_next):
         resp = await call_next(request)
         resp.headers["X-Request-ID"] = rid
 
+    route = request.url.path if request.url.path in KNOWN_ROUTES else "other"
+    HTTP_RESPONSES.labels(route=route, code=str(resp.status_code)).inc()
     if request.url.path not in {"/healthz", "/readyz", "/metrics"}:
         log_event("request", request_id=rid, method=request.method, path=request.url.path,
                   status=resp.status_code, latency_ms=round((time.perf_counter() - start) * 1000, 1))

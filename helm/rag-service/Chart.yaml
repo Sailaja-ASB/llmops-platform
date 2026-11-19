@@ -2,5 +2,5 @@ apiVersion: v2
 name: rag-service
 description: Hybrid (BM25 + dense) retrieval service for the LLMOps platform
 type: application
-version: 0.1.0
+version: 0.1.1   # chart version (0.1.1: Prometheus scrape annotations)
 appVersion: "0.1.0"

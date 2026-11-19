@@ -21,6 +21,12 @@ spec:
         app: {{ .Release.Name }}
         retrieval-mode: {{ .Values.config.retrievalMode | quote }}
       annotations:
+        {{- if .Values.metrics.scrape }}
+        # Prometheus (helm/observability) discovers and scrapes every pod that carries these
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: /metrics
+        {{- end }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       terminationGracePeriodSeconds: 30

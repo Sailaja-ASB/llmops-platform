@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-prometheus
+  labels:
+    app: {{ .Release.Name }}-prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-prometheus
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-prometheus
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/prometheus-config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-prometheus
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: {{ .Values.prometheus.image }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.prometheus.retention }}
+          ports:
+            - containerPort: 9090
+          readinessProbe:
+            httpGet: {path: /-/ready, port: 9090}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /-/healthy, port: 9090}
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+            - {name: data, mountPath: /prometheus}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-prometheus-config
+        - name: data
+          emptyDir: {}   # laptop: data is lost when the pod restarts; production uses a PersistentVolume
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-prometheus
+spec:
+  selector:
+    app: {{ .Release.Name }}-prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
