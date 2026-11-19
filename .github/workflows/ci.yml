@@ -21,7 +21,7 @@ concurrency:
 jobs:
   lint-test:
     name: Lint, unit tests, versions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: same OS every run (ubuntu-latest moves to 26)
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -39,7 +39,7 @@ jobs:
 
   helm:
     name: Helm charts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -66,7 +66,7 @@ jobs:
   gateway-image:
     name: Gateway image + smoke test
     needs: lint-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -96,7 +96,7 @@ jobs:
   rag-retrieval-gate:
     name: RAG image + retrieval gate
     needs: lint-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       MIN_TOP1: "0.95"   # 47-question benchmark; hybrid scores 47/47, dense and BM25 43/47 (91.5%)
@@ -129,7 +129,7 @@ jobs:
   llm-answer-gate:
     name: LLM answer gate (qwen2.5:3b)
     needs: [gateway-image, rag-retrieval-gate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       OLLAMA_IMAGE: ollama/ollama:0.40.16
@@ -189,6 +189,9 @@ jobs:
           python3 rag/eval/eval_ask.py --url http://localhost:8080 --key ci-key --every 4 --temperature 0 \
             --min-model-citation-acc "$MIN_MODEL_CITATION_ACC" --max-invented "$MAX_INVENTED" \
             --max-false-refusals "$MAX_FALSE_REFUSALS" --out results
+      - name: Let the cache read the model files (Ollama wrote them as root)
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" ~/ollama-models
       - name: Upload answers for review
         if: always()
         uses: actions/upload-artifact@v7
