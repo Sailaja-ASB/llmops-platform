@@ -24,6 +24,12 @@ spec:
         model: {{ .Values.config.modelName | replace ":" "-" | quote }}
         prompt-version: {{ .Values.config.promptVersion | quote }}
       annotations:
+        {{- if .Values.metrics.scrape }}
+        # Prometheus (helm/observability) discovers and scrapes every pod that carries these
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
+        {{- end }}
         # restart pods when config or secret changes
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}

@@ -1,0 +1,21 @@
+# Observability stack for the kind cluster: one Prometheus, one Grafana, small enough for an 8 GB laptop.
+# Pods opt in to scraping with annotations (prometheus.io/scrape: "true", prometheus.io/port, prometheus.io/path).
+
+scrapeNamespaces: [llmops]   # Prometheus only discovers pods in these namespaces
+
+prometheus:
+  image: prom/prometheus:v3.15.1
+  scrapeInterval: 15s
+  retention: 2d               # laptop disk; production keeps weeks in long-term storage
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+
+grafana:
+  image: grafana/grafana:13.2.6
+  adminUser: admin
+  adminPassword: ""           # required: --set grafana.adminPassword=... (never committed)
+  anonymousViewer: true       # dashboards open without login (read-only); editing needs the admin login
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 384Mi}

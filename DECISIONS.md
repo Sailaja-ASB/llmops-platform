@@ -2,6 +2,22 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D27 – Count every HTTP response, including the ones rejected at the door (Week 6)
+**Decision:** gateway 0.5.2 adds `llm_http_requests_total{route, code}`, incremented in the edge middleware for every
+response. Routes outside a fixed list are counted as `other`, so the label can't grow without limit.
+**Why:** 401, 413 and 429 are returned before any handler runs, so no metric saw them. In the first local test with
+Prometheus, rate-limited requests were the largest share of traffic (0.45/s of 0.77/s) and were invisible: a dashboard
+built on handler metrics would have looked calm while users were being turned away.
+
+## D26 – Observability as its own chart, with dashboards as code (Week 6)
+**Decision:** `helm/observability` installs one Prometheus and one Grafana in the cluster. Pods opt in to scraping with
+`prometheus.io/*` annotations; Grafana starts with the datasource and the LLMOps dashboard provisioned from JSON in Git.
+CI checks the Prometheus config and every dashboard query with `promtool`.
+**Why:** dashboards made by hand in a UI get lost and drift; in Git they are reviewed and tested like code. Per-pod
+targets fix the Week 2–3 problem of per-pod metrics: queries add pods up with `sum(...)`, and percentiles are computed
+from summed histogram buckets, never by averaging per-pod p95s. Kept small (two pods, ~250 MB requested) for an 8 GB laptop;
+a production cluster would use the Prometheus Operator, persistent storage and remote long-term storage.
+
 ## D25 – Publish images only after every gate, and never overwrite a release tag (Week 5)
 **Decision:** on pushes to `main`, a last CI job pushes both images to GitHub Container Registry using the
 workflow's own `GITHUB_TOKEN`: always as `sha-<commit>`, and as the version from the chart (e.g. `0.5.1`) only if that

@@ -41,7 +41,7 @@ jobs:
 
   helm:
     name: Helm charts
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04   # also validates the observability chart: Prometheus config + dashboard PromQL
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -53,17 +53,33 @@ jobs:
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
             | tar -xz kubeconform
           sudo mv kubeconform /usr/local/bin/
+      - name: Install promtool (Prometheus config and PromQL checker)
+        run: |
+          curl -sSL https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-3.15.1.linux-amd64.tar.gz \
+            | tar -xz --strip-components=1 prometheus-3.15.1.linux-amd64/promtool
+          sudo mv promtool /usr/local/bin/
       - name: helm lint
         run: |
           helm lint helm/llm-gateway --set apiKeys=ci-key
           helm lint helm/rag-service
+          helm lint helm/observability --set grafana.adminPassword=ci-pass
       - name: Render and validate against the Kubernetes schema
         run: |
           mkdir -p rendered
           helm template llm-gateway helm/llm-gateway --set apiKeys=ci-key > rendered/gateway.yaml
           helm template llm-gateway helm/llm-gateway --set apiKeys=ci-key --set autoscaling.enabled=true > rendered/gateway-hpa.yaml
           helm template rag-service helm/rag-service > rendered/rag.yaml
+          helm template observability helm/observability --set grafana.adminPassword=ci-pass > rendered/observability.yaml
           kubeconform -strict -summary rendered/
+      - name: Prometheus config is valid (promtool)
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --break-system-packages pyyaml
+          helm template observability helm/observability --set grafana.adminPassword=ci-pass \
+            --show-only templates/prometheus-config.yaml \
+            | python3 -c "import sys, yaml; print(yaml.safe_load(sys.stdin)['data']['prometheus.yml'])" > prometheus.yml
+          promtool check config prometheus.yml
+      - name: Every dashboard query parses (promtool)
+        run: python3 ci/check_dashboards.py promtool
 
   gateway-image:
     name: Gateway image + smoke test

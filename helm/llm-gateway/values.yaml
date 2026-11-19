@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: llm-gateway
-  tag: "0.5.1"
+  tag: "0.5.2"
   pullPolicy: IfNotPresent   # image is loaded into kind, never pulled
 
 service:
@@ -67,3 +67,6 @@ autoscaling:
 strategy:
   maxUnavailable: 0   # never drop below desired replicas during a rollout
   maxSurge: 1
+
+metrics:
+  scrape: true   # pod annotations for Prometheus service discovery (Week 6)
