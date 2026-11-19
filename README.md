@@ -14,6 +14,8 @@ RAG with verified citations and guardrails. Now: eval-gated CI/CD (GitHub Action
 |---|---|
 | Hybrid retrieval (BM25 + dense, RRF) on a 47-question benchmark | **47/47 Top-1**, vs 43/47 for either method alone |
 | Citation accuracy after a prompt change (rag-v1 → rag-v2) | **40/47 → 47/47**, false "I don't know" 4 → 0 |
+| Same prompt change on 20 held-out questions (never tuned on) | **17/20 → 19/20**, false "I don't know" 3 → 0 |
+| A 2-line prompt regression caught by the CI answer gate | model citations **12/12 → 0/12**, merge blocked |
 | Red-team attacks that succeeded end to end | **0 of 12**, with 0 of 8 real questions wrongly blocked |
 | Stress-test errors after fixing probes and graceful shutdown | **30% → 0%** |
 | Streaming: perceived latency (time to first token, warm) | **3.3 s → 0.2 s** |

@@ -88,7 +88,7 @@ RAG image: 1.87 GB on disk (475 MB compressed). A ~390-token RAG prompt raised T
 | End-to-end latency p50 / p95 | 2.6 s / 5.0 s | 2.7 s / 3.9 s |
 
 rag-v2 was rerun after gateway 0.5.1 and scored 47/47 again. Caveat: rag-v2 was written after seeing
-rag-v1 fail on these questions, so it still needs confirming on held-out questions (Week 5).
+rag-v1 fail on these questions; the held-out check is in Week 5 below (19/20 vs 17/20).
 
 ### Guardrails red team (`rag/eval/eval_guardrails.py`)
 
@@ -99,3 +99,57 @@ rag-v1 fail on these questions, so it still needs confirming on held-out questio
 | Attacks that succeeded end to end | **0/12** (the 4 missed ones were refused by the grounded prompt) |
 
 Missed by the filter (by design of the test): misspelled, Spanish, split words, polite rephrasing.
+
+## Week 5 – CI quality gates and a held-out test set
+
+Measured on GitHub-hosted runners (`ubuntu-24.04`, CPU only), qwen2.5:3b on Ollama 0.40.16, temperature 0,
+services started with the Helm charts' settings (`ci/start_stack.sh`). Nightly full eval #1, Nov 19 2026.
+
+### The gates catch what unit tests can't (one test pull request per gate)
+
+| Test PR (change) | Lint + 34 unit tests | Gate that failed | Result |
+|---|---|---|---|
+| #1 image tag ≠ code version | ❌ version check | Lint, unit tests, versions | failed in 15 s, image builds skipped |
+| #2 `retrievalMode: dense` (Helm value only) | ✅ | RAG retrieval gate | Top-1 91.5% < 95% |
+| #3 2 prompt lines removed (citation rule) | ✅ | LLM answer gate | model citations **12/12 → 0/12**, with 0 errors and 0 refusals |
+
+All five gates are required status checks on `main`, so each PR's merge was blocked.
+
+### Held-out questions (20, written after prompt tuning, never tuned on)
+
+Retrieval, top 10 chunks:
+
+| Method | 47 benchmark Top-1 | 20 held-out Top-1 | Held-out MRR |
+|---|---|---|---|
+| Dense | 43/47 (91.5%) | 18/20 (90%) | 0.933 |
+| BM25 | 43/47 (91.5%) | 16/20 (80%) | 0.892 |
+| **Hybrid (RRF), shipped** | **47/47 (100%)** | **20/20 (100%)** | 1.000 |
+| Hybrid + reranker | 47/47 (100%) | 19/20 (95%) | 0.975 |
+
+Hybrid generalised; the reranker (≈200 ms per query) was not better on unseen questions, which supports
+shipping hybrid without it.
+
+Answers (model's own citations, before any guardrail repair):
+
+| Metric | 47 benchmark, rag-v2 | Held-out, rag-v1 | Held-out, rag-v2 |
+|---|---|---|---|
+| Model cited the expected source | **47/47 (100%)** | 17/20 (85%) | **19/20 (95%)** |
+| False "I don't know" | 0 | 3 | **0** |
+| Invented citation numbers | 0 | 0 | 0 |
+| Sentences without a citation (total) | 3 | 7 | 1 |
+| End-to-end latency p50 / p95 | 7.0 s / 9.8 s | 7.8 s / 12.8 s | 6.1 s / 8.7 s |
+
+rag-v2's gain holds on unseen questions but is smaller: +2 of 20 instead of +7 of 47 (rag-v1's 40/47 was measured
+on the Mac in Week 4). The improvement is the same one as in Week 4, fewer false refusals (3 → 0). The one rag-v2
+miss (h14, backoff between retries) had the right content but cited a different retrieved chunk.
+
+### CI timing
+
+| Run | Duration |
+|---|---|
+| Pull request, 5 gates (LLM gate: 12 questions) | ~5 min |
+| Push to `main`, + publish both images to ghcr.io with SBOM | publish job 1 min 19 s |
+| Nightly full eval (retrieval 47 + 20, answers 47 + 20 + 20) | 13 min |
+| Model cache (qwen2.5:3b) | 1.88 GB, restored instead of downloaded |
+
+Retrieval latency on the runner: hybrid 10.9 ms, reranker 203 ms (Kubernetes pod with a 1-CPU limit: 81 ms / 2,102 ms).
