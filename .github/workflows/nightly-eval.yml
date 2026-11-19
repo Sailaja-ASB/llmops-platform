@@ -1,0 +1,98 @@
+# Nightly full evaluation. The pull-request gate (ci.yml) samples 12 of the 47 questions to stay fast;
+# this run checks everything once a day on main, plus 20 held-out questions that were never used for tuning:
+#   retrieval: 47 benchmark (gate Top-1 >= 95%) and 20 held-out (report only)
+#   answers:   47 benchmark with the shipped prompt (same gate as CI), held-out with rag-v2 AND rag-v1
+#              (report only: shows whether rag-v2's 40/47 -> 47/47 gain carries over to unseen questions)
+# A red nightly run sends the usual GitHub Actions failure email. Start it by hand with "Run workflow".
+name: Nightly full eval
+
+on:
+  schedule:
+    - cron: "37 8 * * *"   # 08:37 UTC daily (02:37 Chicago in winter); off the busy top of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-eval
+  cancel-in-progress: false
+
+jobs:
+  full-eval:
+    name: Full eval (47 + 20 held-out)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      OLLAMA_IMAGE: ollama/ollama:0.40.16
+      MODEL: qwen2.5:3b
+      MIN_TOP1: "0.95"
+      MIN_MODEL_CITATION_ACC: "0.9"
+      MAX_INVENTED: "0"
+      MAX_FALSE_REFUSALS: "2"   # 47 questions instead of 12, so one more refusal is allowed than in CI
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Gateway image (from cache)
+        uses: docker/build-push-action@v7
+        with:
+          context: gateway
+          load: true
+          tags: llm-gateway:ci
+          cache-from: type=gha,scope=gateway
+      - name: RAG image (from cache)
+        uses: docker/build-push-action@v7
+        with:
+          context: rag
+          load: true
+          tags: rag-service:ci
+          build-args: TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+          cache-from: type=gha,scope=rag
+      - name: Model cache
+        uses: actions/cache@v5
+        with:
+          path: ~/ollama-models
+          key: ollama-models-${{ env.MODEL }}-v1
+      - name: Start Ollama, RAG service and gateway with the Helm charts' settings (+ warm-up)
+        run: bash ci/start_stack.sh
+
+      - name: Retrieval, 47 benchmark questions (gate)
+        run: python3 rag/eval/eval_service.py --url http://localhost:8001 --min-top1 "$MIN_TOP1"
+      - name: Retrieval, 20 held-out questions (report only)
+        if: success() || failure()
+        run: python3 rag/eval/eval_service.py --url http://localhost:8001 --questions rag/eval/questions_heldout.json
+
+      - name: Answers, all 47 questions, shipped prompt (gate)
+        if: success() || failure()
+        run: |
+          python3 rag/eval/eval_ask.py --url http://localhost:8080 --key ci-key --temperature 0 \
+            --min-model-citation-acc "$MIN_MODEL_CITATION_ACC" --max-invented "$MAX_INVENTED" \
+            --max-false-refusals "$MAX_FALSE_REFUSALS" --out results
+      - name: Answers, 20 held-out questions, rag-v2 (report only)
+        if: success() || failure()
+        run: |
+          python3 rag/eval/eval_ask.py --url http://localhost:8080 --key ci-key --temperature 0 \
+            --questions rag/eval/questions_heldout.json --prompt-version rag-v2 --out results
+      - name: Answers, 20 held-out questions, rag-v1 (report only, for comparison)
+        if: success() || failure()
+        run: |
+          python3 rag/eval/eval_ask.py --url http://localhost:8080 --key ci-key --temperature 0 \
+            --questions rag/eval/questions_heldout.json --prompt-version rag-v1 --out results
+
+      - name: Let the cache read the model files (Ollama wrote them as root)
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" ~/ollama-models
+      - name: Upload all answers
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-eval-${{ github.run_number }}
+          path: results/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Service logs
+        if: failure()
+        run: |
+          docker logs gw --tail 80
+          docker logs rag --tail 40
+          docker logs ollama --tail 40

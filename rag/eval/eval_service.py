@@ -6,6 +6,7 @@ Checks that the service in Kubernetes ranks as well as the Copilot benchmark
     kubectl -n llmops port-forward svc/rag-service 8001:8001     # in another window
     python3 rag/eval/eval_service.py
     python3 rag/eval/eval_service.py --url http://localhost:8001 --min-top1 0.95
+    python3 rag/eval/eval_service.py --questions rag/eval/questions_heldout.json   # 20 held-out questions
 
 The gate (--min-top1) checks the mode the service actually ships with (its default mode, read
 from /info), so a config change such as RETRIEVAL_MODE=dense is caught even when no code changed.
@@ -55,7 +56,7 @@ def main():
     modes = [m for m in MODES if m != "hybrid_rerank" or info.get("reranker_model")]  # reranker may be off
     post(f"{args.url}/v1/retrieve", {"question": "warm up", "mode": modes[-1]})
 
-    lines = [f"## RAG service retrieval benchmark ({args.url})", "",
+    lines = [f"## RAG service retrieval benchmark: {Path(args.questions).stem} ({args.url})", "",
              f"Questions: {total} | ranking over top 10 chunks | client latency includes HTTP | "
              f"service {info['app_version']}, default mode **{default_mode}**",
              "", "| Mode | Top-1 | Hit@3 | MRR | server ms (avg) | client p50 ms | client p95 ms |",
