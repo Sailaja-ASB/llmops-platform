@@ -30,6 +30,10 @@ spec:
             - --storage.tsdb.retention.time={{ .Values.prometheus.retention }}
           ports:
             - containerPort: 9090
+          startupProbe:
+            httpGet: {path: /-/ready, port: 9090}
+            periodSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet: {path: /-/ready, port: 9090}
             periodSeconds: 10
