@@ -1,0 +1,22 @@
+[
+ {"id": "h01", "question": "Which approach can still find the right passage when the user and the author use different words for the same thing?", "expected_source": "vector_search.md", "type": "paraphrase"},
+ {"id": "h02", "question": "What do bigger embedding models like bge-large or e5-large gain, and what do they cost?", "expected_source": "embedding_models.md", "type": "keyword"},
+ {"id": "h03", "question": "Is BM25 a good choice for finding a stack-trace fragment or an HTTP status code?", "expected_source": "keyword_search.md", "type": "keyword"},
+ {"id": "h04", "question": "How does the merged ranking score a document that shows up in both result lists?", "expected_source": "hybrid_search.md", "type": "direct"},
+ {"id": "h05", "question": "Which lightweight model is a common choice for re-ordering a short list of candidate chunks?", "expected_source": "reranking.md", "type": "keyword"},
+ {"id": "h06", "question": "Roughly how many characters does a typical fixed-size splitter put in each piece of a document?", "expected_source": "chunking.md", "type": "direct"},
+ {"id": "h07", "question": "Why does cutting a long manual into short sections make the matching part easier to find?", "expected_source": "chunking.md", "type": "paraphrase"},
+ {"id": "h08", "question": "Why should the answer key for an evaluation be fixed before any method is tried?", "expected_source": "retrieval_metrics.md", "type": "paraphrase"},
+ {"id": "h09", "question": "What do the checks on incoming requests look for before anything reaches the model?", "expected_source": "guardrails.md", "type": "direct"},
+ {"id": "h10", "question": "Why do people wait longer for the reply to start showing up when the service is busy?", "expected_source": "streaming_ttft.md", "type": "confusable"},
+ {"id": "h11", "question": "A busy server turned my request away immediately. What should my program do next?", "expected_source": "load_shedding.md", "type": "confusable"},
+ {"id": "h12", "question": "Should a restart health check depend on the database being reachable?", "expected_source": "kubernetes_probes.md", "type": "confusable"},
+ {"id": "h13", "question": "Which component reports the CPU utilisation that the autoscaler reacts to?", "expected_source": "autoscaling_hpa.md", "type": "keyword"},
+ {"id": "h14", "question": "When calls to another service keep failing, how should the pause before each new attempt change?", "expected_source": "circuit_breaker.md", "type": "paraphrase"},
+ {"id": "h15", "question": "Why does software shipped as an image run the same way on a developer's machine and on the servers?", "expected_source": "docker_containers.md", "type": "paraphrase"},
+ {"id": "h16", "question": "Which port does the local Ollama HTTP API listen on?", "expected_source": "local_models_ollama.md", "type": "keyword"},
+ {"id": "h17", "question": "Why might a team keep its language model on its own hardware instead of sending data to a cloud provider?", "expected_source": "local_models_ollama.md", "type": "paraphrase"},
+ {"id": "h18", "question": "Which layered defences help protect an LLM application from prompt injection?", "expected_source": "prompt_injection.md", "type": "direct"},
+ {"id": "h19", "question": "Which header usually carries the API key, and what status code comes back when it is missing?", "expected_source": "rate_limiting.md", "type": "keyword"},
+ {"id": "h20", "question": "How can an assistant answer about documents written last week without the model being trained again?", "expected_source": "rag_pipeline.md", "type": "direct"}
+]

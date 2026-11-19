@@ -18,7 +18,7 @@ RAG with verified citations and guardrails. Now: eval-gated CI/CD (GitHub Action
 | Stress-test errors after fixing probes and graceful shutdown | **30% → 0%** |
 | Streaming: perceived latency (time to first token, warm) | **3.3 s → 0.2 s** |
 
-Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (18 decisions)
+Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (25 decisions)
 
 ## Architecture
 
@@ -58,14 +58,23 @@ Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/
 
 | Job | What must pass |
 |---|---|
-| Lint, unit tests, versions | `ruff` ([ruff.toml](ruff.toml)), 32 guardrail unit tests, code version = Helm appVersion = image tag |
+| Lint, unit tests, versions | `ruff` ([ruff.toml](ruff.toml)), 34 unit tests (guardrails + question sets), code version = Helm appVersion = image tag |
 | Helm charts | `helm lint` and rendered manifests validated against the Kubernetes schema (`kubeconform -strict`) |
 | Gateway image + smoke test | the real image starts with no model and passes [8 checks](ci/smoke_gateway.sh): health, readiness 503, version, auth 401, injection blocked 400, quoted attack allowed, validation 422, metrics |
 | RAG image + retrieval gate | the real RAG image, started with the Helm chart's settings, must reach **Top-1 ≥ 95%** on the 47-question benchmark in the mode it ships with |
 | LLM answer gate (qwen2.5:3b) | Ollama + RAG service + gateway run together with the charts' settings; on 12 of the 47 questions (all 4 types, temperature 0) the **model itself** must cite the expected source in ≥ 90% of answers, invent no citations and refuse at most once |
+| Publish images (main only) | after every gate passed: push `llm-gateway` and `rag-service` to `ghcr.io/sailaja-asb/…` with an SBOM, tagged `sha-<commit>`; a version tag such as `0.5.1` is pushed once and never overwritten |
 
 Jobs are staged: cheap checks first, the expensive LLM gate only after everything else passed.
-All jobs are required status checks on `main` (branch ruleset), so a change that fails a gate cannot be merged.
+All five gate jobs are required status checks on `main` (branch ruleset), so a change that fails a gate cannot be merged.
+
+**Proof that the gates work:** two test pull requests changed only configuration or prompt text, so lint and unit tests stayed green.
+Switching retrieval to dense-only failed the retrieval gate (91.5% < 95%, PR #2); deleting the "cite every sentence" rule from
+the prompt failed the LLM answer gate (model citations 12/12 → **0/12**, with 0 errors and 0 refusals, PR #3). Both merges were blocked.
+
+**Nightly full eval** ([`.github/workflows/nightly-eval.yml`](.github/workflows/nightly-eval.yml)): every night on `main`, all 47
+questions (same gates) plus **20 held-out questions** ([`rag/eval/questions_heldout.json`](rag/eval/questions_heldout.json)) written after
+prompt tuning and never used for it, answered with both rag-v1 and rag-v2, to check that the prompt gain was not overfitted to the benchmark.
 
 ## Tech stack
 
@@ -75,14 +84,14 @@ Locust · sentence-transformers · rank-bm25 · Ollama · Qwen2.5-3B · pytest �
 ## Repository layout
 
 ```
-gateway/        FastAPI gateway, guardrails.py, unit tests (32)
-rag/            retrieval service, 18-document corpus, eval scripts (retrieval, answers, red team)
+gateway/        FastAPI gateway, guardrails.py, unit tests (34)
+rag/            retrieval service, 18-document corpus, 47 benchmark + 20 held-out questions, eval scripts
 helm/           charts: llm-gateway, rag-service
 loadtest/       Locust load shapes (steps, spike, stress) + report.py
 results/        raw load-test and eval results
-ci/             version check + gateway smoke test used by GitHub Actions
+ci/             version check, gateway smoke test, start_stack.sh (Ollama + RAG + gateway) for GitHub Actions
 BENCHMARKS.md   every measured number, with its setup
-DECISIONS.md    D1–D18: what was decided and why
+DECISIONS.md    D1–D25: what was decided and why
 ```
 
 ## Run it yourself

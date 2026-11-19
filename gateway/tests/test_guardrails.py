@@ -50,10 +50,23 @@ def test_benign_questions_pass(text):
     assert detect_injection(text) is None
 
 
-def test_no_benchmark_question_is_blocked():
-    questions = json.loads((GATEWAY.parent / "rag" / "eval" / "questions_47.json").read_text())
+EVAL = GATEWAY.parent / "rag" / "eval"
+
+
+@pytest.mark.parametrize("name", ["questions_47.json", "questions_heldout.json"])
+def test_no_benchmark_question_is_blocked(name):
+    questions = json.loads((EVAL / name).read_text())
     blocked = [q["id"] for q in questions if detect_injection(q["question"])]
     assert blocked == []
+
+
+def test_heldout_questions_are_separate_and_valid():
+    # The held-out set only stays meaningful if it never overlaps the tuning set (DECISIONS.md D23).
+    tuning = {q["question"].lower() for q in json.loads((EVAL / "questions_47.json").read_text())}
+    heldout = json.loads((EVAL / "questions_heldout.json").read_text())
+    assert len(heldout) == 20 and len({q["id"] for q in heldout}) == 20
+    assert not [q["id"] for q in heldout if q["question"].lower() in tuning]
+    assert all((RAG_DOCS / q["expected_source"]).exists() for q in heldout)
 
 
 def test_poisoned_document_chunk_is_dropped():

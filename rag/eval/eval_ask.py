@@ -13,6 +13,7 @@ Model behaviour (what the LLM wrote) and final output (after guardrails) are rep
     python3 rag/eval/eval_ask.py --limit 10                          # deployed prompt, quick check
     python3 rag/eval/eval_ask.py --prompt-version rag-v1             # all 47 with the Day 3 prompt
     python3 rag/eval/eval_ask.py --prompt-version rag-v2             # all 47 with the Day 4 prompt
+    python3 rag/eval/eval_ask.py --questions rag/eval/questions_heldout.json   # 20 held-out questions
 
 As a CI quality gate (exit code 1 if any threshold is missed). Thresholds judge what the MODEL wrote,
 before any guardrail repair, so a repair can never hide a worse prompt (DECISIONS.md D18):
@@ -101,7 +102,7 @@ def main():
     lat = [r["latency_s"] for r in ok]
     version = ok[0]["prompt_version"] if ok else args.prompt_version
     lines = [
-        f"## RAG answer eval through the gateway ({datetime.now():%Y-%m-%d %H:%M}, prompt {version})", "",
+        f"## RAG answer eval: {Path(args.questions).stem}, prompt {version} ({datetime.now():%Y-%m-%d %H:%M})", "",
         f"Questions: {len(rows)} | answered: {n} | HTTP errors: {len(rows) - n}", "",
         "| Metric | Value |", "|---|---|",
         f"| Retrieval hit (expected source retrieved, top 3) | {sum(r['retrieval_hit'] for r in ok)}/{n} |",
@@ -154,7 +155,7 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = f"rag_ask_{version}_{stamp}"
+    name = f"rag_ask_{Path(args.questions).stem}_{version}_{stamp}"
     (out / f"{name}.json").write_text(json.dumps(rows, indent=2))
     (out / f"{name}.md").write_text(report + "\n")
     print(f"\nSaved {out}/{name}.md")

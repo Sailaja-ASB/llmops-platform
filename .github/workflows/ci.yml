@@ -3,6 +3,8 @@
 #   retrieval: Top-1 of the shipped mode >= MIN_TOP1 on the 47-question benchmark
 #   answers:   the real model (qwen2.5:3b) must cite the expected source, invent no citations, rarely refuse
 # Order: cheap checks first, the expensive LLM gate last (only after everything else passed).
+# On main only: after every gate passed, publish both images to GitHub Container Registry (ghcr.io).
+# The full 47 + held-out questions run nightly (nightly-eval.yml).
 name: CI
 
 on:
@@ -160,30 +162,8 @@ jobs:
         with:
           path: ~/ollama-models
           key: ollama-models-${{ env.MODEL }}-v1
-      - name: Start Ollama, RAG service and gateway with the Helm charts' settings
-        run: |
-          val() { sed -n "s/^ *$1: *\"\([^\"]*\)\".*/\1/p" "$2"; }
-          docker network create ci
-          mkdir -p ~/ollama-models
-          docker run -d --name ollama --network ci -v ~/ollama-models:/root/.ollama/models "$OLLAMA_IMAGE"
-          for _ in $(seq 1 30); do docker exec ollama ollama list > /dev/null 2>&1 && break; sleep 2; done
-          docker exec ollama ollama pull "$MODEL"
-          docker run -d --name rag --network ci -p 8001:8001 \
-            -e RETRIEVAL_MODE="$(val retrievalMode helm/rag-service/values.yaml)" \
-            -e LOAD_RERANKER="$(val loadReranker helm/rag-service/values.yaml)" \
-            rag-service:ci
-          docker run -d --name gw --network ci -p 8080:8000 \
-            -e API_KEYS=ci-key -e OLLAMA_URL=http://ollama:11434 -e RAG_URL=http://rag:8001 -e MODEL_NAME="$MODEL" \
-            -e RAG_PROMPT_VERSION="$(val ragPromptVersion helm/llm-gateway/values.yaml)" \
-            -e GUARDRAILS_ENABLED="$(val guardrailsEnabled helm/llm-gateway/values.yaml)" \
-            -e CITATION_REPAIR="$(val citationRepair helm/llm-gateway/values.yaml)" \
-            llm-gateway:ci
-          for _ in $(seq 1 90); do curl -sf localhost:8001/readyz > /dev/null && curl -sf localhost:8080/readyz > /dev/null && break; sleep 2; done
-          curl -sf localhost:8080/version
-      - name: Warm up the model (load into memory, not measured)
-        run: |
-          curl -sf -X POST localhost:8080/v1/generate -H "X-API-Key: ci-key" -H "Content-Type: application/json" \
-            -d '{"prompt":"Say OK.","max_tokens":5}'
+      - name: Start Ollama, RAG service and gateway with the Helm charts' settings (+ warm-up)
+        run: bash ci/start_stack.sh
       - name: Answer quality gate (12 of 47 questions, temperature 0)
         run: |
           python3 rag/eval/eval_ask.py --url http://localhost:8080 --key ci-key --every 4 --temperature 0 \
@@ -205,3 +185,61 @@ jobs:
           docker logs gw --tail 80
           docker logs rag --tail 40
           docker logs ollama --tail 40
+
+  publish-images:
+    name: Publish images to ghcr.io (main only)
+    needs: [helm, llm-answer-gate]    # llm-answer-gate itself needs lint-test, gateway-image and rag-retrieval-gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to ghcr.io with the workflow's own token (no personal secret needed)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Work out tags (release tags are never overwritten)
+        id: tags
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          sha=$(git rev-parse --short=7 HEAD)
+          echo "### Published images" >> "$GITHUB_STEP_SUMMARY"
+          for svc in llm-gateway rag-service; do
+            version=$(sed -n 's/^appVersion: *"\{0,1\}\([^" ]*\).*/\1/p' "helm/$svc/Chart.yaml")
+            image="ghcr.io/$owner/$svc"
+            tags="$image:sha-$sha"
+            if docker buildx imagetools inspect "$image:$version" > /dev/null 2>&1; then
+              note="$version already published, kept unchanged (bump the version to release); pushed sha-$sha only"
+            else
+              tags="$tags,$image:$version"
+              note="new release $version + sha-$sha"
+            fi
+            key=$(echo "$svc" | tr '-' '_')
+            echo "${key}_tags=$tags" >> "$GITHUB_OUTPUT"
+            echo "- \`$image\`: $note" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Push llm-gateway
+        uses: docker/build-push-action@v7
+        with:
+          context: gateway
+          push: true
+          tags: ${{ steps.tags.outputs.llm_gateway_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          sbom: true
+          cache-from: type=gha,scope=gateway
+      - name: Push rag-service (CPU-only PyTorch, models baked in)
+        uses: docker/build-push-action@v7
+        with:
+          context: rag
+          push: true
+          tags: ${{ steps.tags.outputs.rag_service_tags }}
+          build-args: TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          sbom: true
+          cache-from: type=gha,scope=rag

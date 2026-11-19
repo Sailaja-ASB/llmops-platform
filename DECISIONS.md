@@ -2,6 +2,28 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D25 – Publish images only after every gate, and never overwrite a release tag (Week 5)
+**Decision:** on pushes to `main`, a last CI job pushes both images to GitHub Container Registry using the
+workflow's own `GITHUB_TOKEN`: always as `sha-<commit>`, and as the version from the chart (e.g. `0.5.1`) only if that
+tag does not exist yet. Each image carries an SBOM and a link back to the source commit.
+**Why:** an image in the registry should mean "passed every gate". If a version tag could be overwritten, `0.5.1`
+would point to different code on different days (the Week 4 bug where an image tagged 0.5.1 ran 0.5.0 code).
+The commit tag gives traceability for every build; the version tag changes only when the version is bumped.
+
+## D24 – Sample in the pull request, everything nightly (Week 5)
+**Decision:** pull requests run 12 of the 47 questions through the model; a scheduled nightly job runs all 47
+(same gates, one more refusal allowed) plus the held-out set, and keeps every answer as an artifact for 30 days.
+**Why:** a fast PR gate keeps developers waiting minutes, not a quarter of an hour, while the nightly run catches what the
+sample can miss. A failed nightly run emails the owner like any failed workflow.
+
+## D23 – A held-out question set, written after tuning and never tuned on (Week 5)
+**Decision:** 20 new questions (one or two per document, all four types) live in `questions_heldout.json`. They were
+written on Nov 19 after the rag-v2 prompt was chosen, are reported but not gated until a baseline exists, and are not
+edited after their results are seen. A unit test checks they never overlap the 47.
+**Why:** rag-v2 went from 40/47 to 47/47 on the same 47 questions it was tuned on, which can be overfitting. Only
+unseen questions show whether the gain is real. The set was kept harder on purpose: BM25 alone gets 16/20 here
+(80%) against 43/47 (91.5%) on the benchmark, so it is not just the documents' own wording.
+
 ## D22 – An LLM answer gate on a sample, judged on what the model wrote (Week 5)
 **Decision:** CI runs the real model (qwen2.5:3b on Ollama), the RAG service and the gateway together with the
 Helm charts' settings, asks 12 of the 47 questions (every 4th: all 4 question types) at temperature 0, and fails if
