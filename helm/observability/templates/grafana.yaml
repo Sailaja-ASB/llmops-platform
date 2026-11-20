@@ -94,17 +94,22 @@ spec:
           # Grafana 13 needed ~70 s to start on the laptop (loading bundled plugins). Without a startup probe the
           # liveness probe killed it at ~90 s, every time: a restart loop. The startup probe allows up to 5 min for
           # the first start; liveness and readiness only begin after it succeeds (same lesson as the Week 3 probe bug).
+          # timeoutSeconds 5: the default 1 s killed Grafana while it was busy loading a dashboard on a laptop
+          # whose CPU was shared with the model (Week 6: exit 137, "context deadline exceeded", 4 restarts).
           startupProbe:
             httpGet: {path: /api/health, port: 3000}
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 30
           readinessProbe:
             httpGet: {path: /api/health, port: 3000}
             periodSeconds: 10
-          livenessProbe:
+            timeoutSeconds: 5
+          livenessProbe:            # restart only after ~2 minutes of no answer, not 3 slow replies
             httpGet: {path: /api/health, port: 3000}
             periodSeconds: 20
-            failureThreshold: 3
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.grafana.resources | nindent 12 }}
           securityContext:
