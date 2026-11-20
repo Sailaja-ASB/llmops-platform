@@ -2,6 +2,15 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D28 – Liveness probes catch a hung process, not a slow one (Week 6)
+**Decision:** every probe in the observability chart waits 5 s for an answer (Kubernetes' default is 1 s), and a
+liveness probe restarts a pod only after 6 failures in a row (about 2 minutes). Grafana also requests 250m CPU.
+**Why:** Grafana restarted four times, always while a dashboard was loading. The pod events said
+`Liveness probe failed: context deadline exceeded`, and the exit code was 137, meaning Kubernetes killed it, not a crash.
+On a laptop where the model uses most of the CPU, a busy but healthy Grafana answered its health check in more than
+1 s, three times in a row. Restarting a slow pod makes things worse: the restart costs more CPU and every open dashboard
+breaks. It is the same lesson as the Week 3 startup probe, from the other side: a probe has to fit the real machine.
+
 ## D27 – Count every HTTP response, including the ones rejected at the door (Week 6)
 **Decision:** gateway 0.5.2 adds `llm_http_requests_total{route, code}`, incremented in the edge middleware for every
 response. Routes outside a fixed list are counted as `other`, so the label can't grow without limit.

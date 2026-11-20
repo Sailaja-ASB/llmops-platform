@@ -20,7 +20,7 @@ RAG with verified citations and guardrails → eval-gated CI/CD. Now: observabil
 | Stress-test errors after fixing probes and graceful shutdown | **30% → 0%** |
 | Streaming: perceived latency (time to first token, warm) | **3.3 s → 0.2 s** |
 
-Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (27 decisions)
+Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (28 decisions)
 
 ## Architecture
 
@@ -122,6 +122,8 @@ curl -s -X POST localhost:8080/v1/ask -H "X-API-Key: $KEY" -H "Content-Type: app
 helm upgrade --install observability helm/observability -n llmops --set grafana.adminPassword="$(openssl rand -hex 8)"
 kubectl -n llmops port-forward svc/observability-grafana 3000:3000 &     # http://localhost:3000
 kubectl -n llmops port-forward svc/observability-prometheus 9090:9090 &  # http://localhost:9090/targets
+bash loadtest/dashboard_traffic.sh http://localhost:8080 "$KEY" 10        # fills every panel, ends with a 429 burst
+# A port-forward follows one pod: after a rollout or restart, run it again.
 
 # 5. Evaluate
 python3 -m pytest -q gateway/tests
