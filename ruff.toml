@@ -15,3 +15,4 @@ known-first-party = ["guardrails", "fusion", "retriever"]
 
 [lint.per-file-ignores]
 "gateway/guardrails.py" = ["E501"]   # attack patterns are long regexes; splitting them hurts readability
+"ci/build_dashboard.py" = ["E501"]   # PromQL queries and panel descriptions stay on one line so they can be copied as they are
