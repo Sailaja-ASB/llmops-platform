@@ -18,4 +18,4 @@ grafana:
   anonymousViewer: true       # dashboards open without login (read-only); editing needs the admin login
   resources:
     requests: {cpu: 50m, memory: 128Mi}
-    limits: {cpu: 500m, memory: 384Mi}
+    limits: {cpu: "1", memory: 384Mi}   # 0.5 CPU made the first start take over a minute (throttling)
