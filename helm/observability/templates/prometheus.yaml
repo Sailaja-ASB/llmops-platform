@@ -33,13 +33,17 @@ spec:
           startupProbe:
             httpGet: {path: /-/ready, port: 9090}
             periodSeconds: 5
+            timeoutSeconds: 5
             failureThreshold: 60
           readinessProbe:
             httpGet: {path: /-/ready, port: 9090}
             periodSeconds: 10
+            timeoutSeconds: 5
           livenessProbe:
             httpGet: {path: /-/healthy, port: 9090}
             periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.prometheus.resources | nindent 12 }}
           securityContext:

@@ -17,5 +17,5 @@ grafana:
   adminPassword: ""           # required: --set grafana.adminPassword=... (never committed)
   anonymousViewer: true       # dashboards open without login (read-only); editing needs the admin login
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
+    requests: {cpu: 250m, memory: 128Mi}   # a real CPU share, so the model can't starve Grafana's health checks
     limits: {cpu: "1", memory: 384Mi}   # 0.5 CPU made the first start take over a minute (throttling)
