@@ -1054,7 +1054,7 @@
       "type": "table",
       "title": "Versions running now",
       "id": 23,
-      "description": "",
+      "description": "Read from the *_build_info metrics each pod exposes: what is actually running, not what the chart says.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1071,7 +1071,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (app_version, model, prompt_version) (llm_gateway_build_info)",
+          "expr": "max by (service, app_version, model, rag_prompt_version) (label_replace(llm_gateway_build_info, \"service\", \"llm-gateway\", \"\", \"\"))",
           "legendFormat": "gateway",
           "refId": "A",
           "format": "table",
@@ -1082,7 +1082,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (app_version, embedding_model) (rag_service_build_info)",
+          "expr": "max by (service, app_version, embedding_model, default_mode) (label_replace(rag_service_build_info, \"service\", \"rag-service\", \"\", \"\"))",
           "legendFormat": "rag-service",
           "refId": "B",
           "format": "table",
@@ -1104,7 +1104,23 @@
           "options": {
             "excludeByName": {
               "Time": true,
-              "Value": true
+              "Value": true,
+              "Value #A": true,
+              "Value #B": true
+            },
+            "indexByName": {
+              "service": 0,
+              "app_version": 1,
+              "model": 2,
+              "rag_prompt_version": 3,
+              "embedding_model": 4,
+              "default_mode": 5
+            },
+            "renameByName": {
+              "app_version": "version",
+              "rag_prompt_version": "RAG prompt",
+              "embedding_model": "embedding model",
+              "default_mode": "retrieval mode"
             }
           }
         }
