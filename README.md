@@ -61,7 +61,7 @@ Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/
 
 | Job | What must pass |
 |---|---|
-| Lint, unit tests, versions | `ruff` ([ruff.toml](ruff.toml)), 38 unit tests (guardrails, question sets, tracing), code version = Helm appVersion = image tag |
+| Lint, unit tests, versions | `ruff` ([ruff.toml](ruff.toml)), 39 unit tests (guardrails, question sets, tracing), code version = Helm appVersion = image tag |
 | Helm charts | `helm lint` and rendered manifests (gateway, RAG, observability) validated with `kubeconform -strict`; Prometheus config checked with `promtool`; every dashboard PromQL query must parse ([check_dashboards.py](ci/check_dashboards.py)); alert rules pass unit tests ([alert_tests.yml](ci/alert_tests.yml)) |
 | Gateway image + smoke test | the real image starts with no model and passes [9 checks](ci/smoke_gateway.sh): health, readiness 503, version, auth 401, injection blocked 400, quoted attack allowed, validation 422, the 401 counted in metrics, guardrail metrics |
 | RAG image + retrieval gate | the real RAG image, started with the Helm chart's settings, must reach **Top-1 ≥ 95%** on the 47-question benchmark in the mode it ships with |

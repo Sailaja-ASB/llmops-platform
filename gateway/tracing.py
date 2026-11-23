@@ -54,6 +54,17 @@ def setup_tracing(app, version: str, exporter=None) -> bool:
     return True
 
 
+def untraced():
+    """Context manager: calls inside it create no spans (used for the readiness check's call to Ollama).
+
+    Excluding /readyz only removes the server span; the outgoing httpx call then had no parent and became a
+    one-span "GET" trace of its own, a few per second across pods (found on the cluster, Week 6 Day 3).
+    """
+    from opentelemetry.instrumentation.utils import suppress_instrumentation
+
+    return suppress_instrumentation()
+
+
 def current_trace_id() -> str | None:
     """Hex trace id of the active span, or None when tracing is off (put in logs and responses)."""
     ctx = trace.get_current_span().get_span_context()

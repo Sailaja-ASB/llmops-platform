@@ -103,3 +103,12 @@ def test_rejected_at_the_edge_still_gets_a_trace_id(client):
     r = client.post("/v1/ask", json={"question": "no key"})
     assert r.status_code == 401
     assert len(r.headers.get("X-Trace-ID", "")) == 32
+
+
+def test_readiness_probe_makes_no_traces(client):
+    """/readyz is excluded, but its call to Ollama used to show up as its own 'GET' trace every few seconds
+    (found on the cluster: 20 one-span traces a minute buried the real requests)."""
+    main.app.state.client = httpx.AsyncClient(base_url="http://127.0.0.1:9")  # real transport, nothing listening
+    main._ready["at"] = float("-inf")  # force a fresh check
+    client.get("/readyz")
+    assert EXPORTER.get_finished_spans() == (), [s.name for s in EXPORTER.get_finished_spans()]

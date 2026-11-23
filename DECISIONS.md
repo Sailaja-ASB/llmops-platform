@@ -11,7 +11,8 @@ observability chart, also a Grafana datasource). The trace id is in every log li
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set (chart value `tracing.enabled`), so tests and CI need no backend.
 **Why:** metrics say *that* p95 is 31 s; a trace says *where* one slow request spent its time. Spans named after our own
 steps make a trace readable without knowing the code, and a blocked question is recorded as an attribute, not an error, so
-"errors" in Jaeger mean real failures. Health probes and scrapes are not traced (they would bury real requests). Unit tests
+"errors" in Jaeger mean real failures. Health probes and scrapes are not traced (they would bury real requests); this includes the readiness check's own call to
+Ollama, which first showed up as a stray one-span "GET" trace every few seconds. Unit tests
 check that one `/v1/ask` produces exactly one trace with all four steps as children of the request span.
 Not traced yet: inside the RAG service (BM25 vs. dense vs. fusion); it receives the trace context and can join later.
 

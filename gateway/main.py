@@ -71,7 +71,7 @@ from guardrails import (
     strip_invalid_citations,
     uncited_sentences,
 )
-from tracing import current_trace_id, setup_tracing, tracer
+from tracing import current_trace_id, setup_tracing, tracer, untraced
 
 # ---------- Configuration (env vars; set by ConfigMap / Secret) ----------
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -334,7 +334,8 @@ async def readyz(request: Request):
     now = time.monotonic()
     if now - _ready["at"] >= READY_CACHE_S:
         try:
-            r = await request.app.state.client.get("/api/tags", timeout=2)
+            with untraced():   # probes are not traced (D32): no stray one-span "GET" traces
+                r = await request.app.state.client.get("/api/tags", timeout=2)
             r.raise_for_status()
             breaker.success()  # model server is back: close the breaker
             _ready.update(ok=True, at=now, detail="")
