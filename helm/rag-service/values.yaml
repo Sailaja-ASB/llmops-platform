@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: rag-service
-  tag: "0.1.0"
+  tag: ""   # empty = the chart's appVersion (recommended). Set only to pin another image on purpose.
   pullPolicy: IfNotPresent   # loaded into kind, never pulled
 
 service:

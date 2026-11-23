@@ -8,7 +8,6 @@ data:
   OLLAMA_URL: {{ .Values.config.ollamaUrl | quote }}
   MODEL_NAME: {{ .Values.config.modelName | quote }}
   PROMPT_VERSION: {{ .Values.config.promptVersion | quote }}
-  APP_VERSION: {{ .Chart.AppVersion | quote }}
   CONNECT_TIMEOUT: {{ .Values.config.connectTimeout | quote }}
   REQUEST_TIMEOUT: {{ .Values.config.requestTimeout | quote }}
   MAX_BODY_BYTES: {{ .Values.config.maxBodyBytes | quote }}

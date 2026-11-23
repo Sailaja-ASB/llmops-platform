@@ -5,7 +5,6 @@ metadata:
   labels:
     app: {{ .Release.Name }}
 data:
-  APP_VERSION: {{ .Chart.AppVersion | quote }}
   RETRIEVAL_MODE: {{ .Values.config.retrievalMode | quote }}
   RETRIEVAL_CANDIDATES: {{ .Values.config.retrievalCandidates | quote }}
   LOAD_RERANKER: {{ .Values.config.loadReranker | quote }}

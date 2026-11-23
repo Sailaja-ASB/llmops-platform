@@ -1,5 +1,7 @@
 """LLM Gateway - LLMOps platform.
 
+0.5.4: the version is part of the code and image only; it can no longer be set from outside (APP_VERSION env
+       from the chart made 0.5.2 code report 0.5.3 on the cluster).
 0.5.3: llm_model_server_ready and llm_breaker_open gauges, so alerts can see a model outage even after
        Kubernetes has taken every pod out of the Service (no traffic reaches them, so no error is counted).
 0.5.2: llm_http_requests_total{route, code} counts every response, including 401/413/429 from the edge.
@@ -71,7 +73,7 @@ from guardrails import (
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:3b")
 PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
-APP_VERSION = os.getenv("APP_VERSION", "0.5.3")
+APP_VERSION = "0.5.4"  # baked into the image on purpose: never read from the environment (DECISIONS D31)
 CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "3"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
 MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "32768"))
