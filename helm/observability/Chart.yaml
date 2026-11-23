@@ -2,5 +2,5 @@ apiVersion: v2
 name: observability
 description: Prometheus + Grafana for the LLMOps platform (scrapes the gateway and RAG pods, ships the LLMOps dashboard)
 type: application
-version: 0.1.3   # 0.1.3: clearer Versions table; 0.1.2: 5 s probe timeouts (busy Grafana was killed by 1 s probes); 0.1.1: startup probes
+version: 0.2.0   # 0.2.0: alert rules (rules/llmops-alerts.yml) + Alerts row; 0.1.3: clearer Versions table; 0.1.2: 5 s probe timeouts (busy Grafana was killed by 1 s probes); 0.1.1: startup probes
 appVersion: "v3.15.1"   # Prometheus version; Grafana version is in values.yaml

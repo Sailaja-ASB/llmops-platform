@@ -42,6 +42,7 @@ check "a question that only quotes an attack is NOT blocked (503: no RAG in CI)"
 req POST /v1/ask '{"question":""}' "$KEY"
 check "empty question fails validation" 422 "$STATUS"
 req GET /metrics;  check "/metrics counts the 401 rejected at the edge" 200 "$STATUS" 'llm_http_requests_total{code="401",route="/v1/ask"} 1.0' "$BODY"
+req GET /metrics;  check "/metrics reports the model server as not ready (for alerts)" 200 "$STATUS" 'llm_model_server_ready 0.0' "$BODY"
 req GET /metrics;  check "/metrics counts guardrail blocks" 200 "$STATUS" 'llm_guardrail_blocks_total{reason="ignore_instructions",stage="input"} 1.0' "$BODY"
 
 echo; [[ $FAILS -eq 0 ]] && echo "All smoke checks passed." || echo "$FAILS smoke check(s) failed."

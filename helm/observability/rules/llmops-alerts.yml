@@ -1,0 +1,78 @@
+# LLMOps alert rules (Week 6 Day 2). Loaded by Prometheus from the observability chart and unit-tested in CI
+# with `promtool test rules` (ci/alert_tests.yml). Thresholds are sized for a laptop kind cluster; see D29.
+groups:
+  - name: llmops-availability
+    rules:
+      - alert: LLMGatewayDown
+        expr: sum(up{app="llm-gateway"}) < 1 or absent(up{app="llm-gateway"})
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "No gateway pod is answering Prometheus scrapes"
+          description: "All llm-gateway pods are gone or not running for 1 minute. Check: kubectl -n llmops get pods"
+      - alert: RAGServiceDown
+        expr: sum(up{app="rag-service"}) < 1 or absent(up{app="rag-service"})
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "The RAG service is down"
+          description: "No rag-service pod has answered a scrape for 1 minute, so /v1/ask cannot retrieve sources."
+      - alert: LLMModelServerUnreachable
+        expr: max(llm_model_server_ready) < 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "No gateway pod can reach the model server (Ollama)"
+          description: >-
+            Every gateway pod failed its readiness check for 1 minute, so Kubernetes has removed them from the
+            Service and clients get connection errors. No request reaches a pod, so error-rate alerts stay quiet;
+            this alert reads the readiness result each pod still reports to Prometheus.
+      - alert: LLMCircuitBreakerOpen
+        expr: max(llm_breaker_open) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "A gateway circuit breaker has been open for 1 minute"
+          description: "The model server keeps failing, so at least one gateway pod is refusing requests during the breaker cooldown."
+
+  - name: llmops-performance
+    rules:
+      - alert: LLMHighErrorRate
+        expr: |
+          (
+            sum(rate(llm_http_requests_total{route=~"/v1/.*", code=~"5.."}[5m]))
+            /
+            sum(rate(llm_http_requests_total{route=~"/v1/.*"}[5m]))
+          ) > 0.05
+          and sum(rate(llm_http_requests_total{route=~"/v1/.*"}[5m])) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 5% of API requests fail with a 5xx"
+          description: "5xx share of /v1 responses is {{ $value | humanizePercentage }} (at least 3 requests a minute)."
+      - alert: LLMHighLatencyP95
+        expr: histogram_quantile(0.95, sum by (le) (rate(llm_request_latency_seconds_bucket[5m]))) > 30
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 end-to-end latency is above 30 s"
+          description: "p95 is {{ $value | humanizeDuration }}. On the laptop cluster, p95 was 15.6 s at normal load and 31.2 s under a burst."
+
+  - name: llmops-quality
+    rules:
+      - alert: LLMCitationQualityLow
+        expr: |
+          (
+            sum(increase(llm_rag_answers_total{outcome="cited"}[1h]))
+            /
+            sum(increase(llm_rag_answers_total[1h]))
+          ) < 0.9
+          and sum(increase(llm_rag_answers_total[1h])) >= 10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Fewer than 90% of answers cite their source (last hour)"
+          description: >-
+            Only {{ $value | humanizePercentage }} of /v1/ask answers in the last hour cited a valid source on their
+            own, below the 90% bar the CI answer gate enforces. Likely causes: a prompt or model change, or a RAG
+            index problem.

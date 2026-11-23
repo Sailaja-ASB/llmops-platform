@@ -71,13 +71,16 @@ jobs:
           helm template rag-service helm/rag-service > rendered/rag.yaml
           helm template observability helm/observability --set grafana.adminPassword=ci-pass > rendered/observability.yaml
           kubeconform -strict -summary rendered/
-      - name: Prometheus config is valid (promtool)
+      - name: Prometheus config and alert rules are valid (promtool)
         run: |
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --break-system-packages pyyaml
           helm template observability helm/observability --set grafana.adminPassword=ci-pass \
             --show-only templates/prometheus-config.yaml \
-            | python3 -c "import sys, yaml; print(yaml.safe_load(sys.stdin)['data']['prometheus.yml'])" > prometheus.yml
-          promtool check config prometheus.yml
+            > prometheus-config.yaml
+          python3 -c "import yaml; d = yaml.safe_load(open('prometheus-config.yaml'))['data']; [open(k, 'w').write(v) for k, v in d.items()]"
+          promtool check config prometheus.yml   # also checks the alert rules it loads (alerts.yml)
+      - name: Alert rules behave as intended (promtool test rules)
+        run: promtool test rules ci/alert_tests.yml
       - name: Every dashboard query parses (promtool)
         run: python3 ci/check_dashboards.py promtool
 

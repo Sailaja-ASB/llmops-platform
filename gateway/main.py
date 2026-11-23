@@ -1,5 +1,7 @@
 """LLM Gateway - LLMOps platform.
 
+0.5.3: llm_model_server_ready and llm_breaker_open gauges, so alerts can see a model outage even after
+       Kubernetes has taken every pod out of the Service (no traffic reaches them, so no error is counted).
 0.5.2: llm_http_requests_total{route, code} counts every response, including 401/413/429 from the edge.
 0.5.1: a refusal ("I don't know based on the provided documents.") never carries a citation.
 
@@ -69,7 +71,7 @@ from guardrails import (
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:3b")
 PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
-APP_VERSION = os.getenv("APP_VERSION", "0.5.2")
+APP_VERSION = os.getenv("APP_VERSION", "0.5.3")
 CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "3"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
 MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "32768"))
@@ -142,6 +144,11 @@ BUILD = Info("llm_gateway_build", "Deployed versions")
 # Every HTTP response, including the ones the edge middleware rejects before any handler runs (401, 413, 429).
 # Without it, rate-limited and unauthenticated traffic was invisible on dashboards (found in Week 6).
 HTTP_RESPONSES = Counter("llm_http_requests_total", "HTTP responses by route and status code", ["route", "code"])
+# Alerting signals (Week 6 Day 2). When the model server is down, /readyz fails, Kubernetes removes every pod
+# from the Service and clients get "connection refused": no request reaches a pod, so no error is counted.
+# Prometheus still scrapes each pod directly, so these gauges keep reporting the outage.
+MODEL_READY = Gauge("llm_model_server_ready", "1 if this pod's last readiness check reached the model server, else 0")
+BREAKER_OPEN_NOW = Gauge("llm_breaker_open", "1 while this pod's circuit breaker is open (requests are refused)")
 KNOWN_ROUTES = {"/healthz", "/readyz", "/version", "/metrics", "/v1/generate", "/v1/generate/stream",
                 "/v1/ask", "/v1/ask/stream"}   # anything else is counted as "other" (bounded label values)
 BUILD.info({"app_version": APP_VERSION, "model": MODEL_NAME, "prompt_version": PROMPT_VERSION,
@@ -177,6 +184,7 @@ class Breaker:
 
 
 breaker = Breaker(BREAKER_THRESHOLD, BREAKER_COOLDOWN_S)
+BREAKER_OPEN_NOW.set_function(lambda: 1.0 if breaker.state == "open" else 0.0)
 
 # ---------- Rate limiting (per API key, per pod) ----------
 _windows: dict[str, list[float]] = {}
@@ -307,6 +315,7 @@ async def readyz(request: Request):
     every probe doesn't add another call to a busy model server.
     """
     if not breaker.allow():
+        MODEL_READY.set(0)
         raise HTTPException(status_code=503, detail="circuit breaker open")
     now = time.monotonic()
     if now - _ready["at"] >= READY_CACHE_S:
@@ -317,6 +326,7 @@ async def readyz(request: Request):
             _ready.update(ok=True, at=now, detail="")
         except httpx.HTTPError as exc:
             _ready.update(ok=False, at=now, detail=f"model server not ready: {exc}")
+    MODEL_READY.set(1 if _ready["ok"] else 0)
     if not _ready["ok"]:
         raise HTTPException(status_code=503, detail=_ready["detail"])
     return {"status": "ready", "model": MODEL_NAME}

@@ -1,0 +1,154 @@
+# Unit tests for the alert rules: `promtool test rules ci/alert_tests.yml` (runs in CI, Helm charts job).
+# Each test feeds made-up series to Prometheus' rule engine and checks which alerts are firing at a given time.
+rule_files:
+  - ../helm/observability/rules/llmops-alerts.yml
+evaluation_interval: 1m
+
+tests:
+  - name: healthy platform fires nothing
+    interval: 1m
+    input_series:
+      - series: 'up{app="llm-gateway", pod="gw-1"}'
+        values: '1x20'
+      - series: 'up{app="rag-service", pod="rag-1"}'
+        values: '1x20'
+      - series: 'llm_model_server_ready{pod="gw-1"}'
+        values: '1x20'
+      - series: 'llm_breaker_open{pod="gw-1"}'
+        values: '0x20'
+      - series: 'llm_http_requests_total{route="/v1/ask", code="200", pod="gw-1"}'
+        values: '0+60x20'
+      - series: 'llm_rag_answers_total{outcome="cited", pod="gw-1"}'
+        values: '0+10x20'
+    alert_rule_test:
+      - {eval_time: 15m, alertname: LLMGatewayDown, exp_alerts: []}
+      - {eval_time: 15m, alertname: LLMModelServerUnreachable, exp_alerts: []}
+      - {eval_time: 15m, alertname: LLMHighErrorRate, exp_alerts: []}
+      - {eval_time: 15m, alertname: LLMCitationQualityLow, exp_alerts: []}
+
+  - name: gateway down waits 1 minute, then fires
+    interval: 1m
+    input_series:
+      - series: 'up{app="llm-gateway", pod="gw-1"}'
+        values: '1 1 0 0 0 0'
+    alert_rule_test:
+      - {eval_time: 2m, alertname: LLMGatewayDown, exp_alerts: []}   # pending
+      - eval_time: 4m
+        alertname: LLMGatewayDown
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "No gateway pod is answering Prometheus scrapes"
+              description: "All llm-gateway pods are gone or not running for 1 minute. Check: kubectl -n llmops get pods"
+
+  - name: model server outage is seen even with zero traffic
+    interval: 1m
+    input_series:
+      - series: 'llm_model_server_ready{pod="gw-1"}'
+        values: '1 1 0 0 0 0'
+      - series: 'llm_model_server_ready{pod="gw-2"}'
+        values: '1 1 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LLMModelServerUnreachable
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "No gateway pod can reach the model server (Ollama)"
+              description: "Every gateway pod failed its readiness check for 1 minute, so Kubernetes has removed them from the Service and clients get connection errors. No request reaches a pod, so error-rate alerts stay quiet; this alert reads the readiness result each pod still reports to Prometheus."
+
+  - name: one healthy pod is enough, no model alert
+    interval: 1m
+    input_series:
+      - series: 'llm_model_server_ready{pod="gw-1"}'
+        values: '0x10'
+      - series: 'llm_model_server_ready{pod="gw-2"}'
+        values: '1x10'
+    alert_rule_test:
+      - {eval_time: 8m, alertname: LLMModelServerUnreachable, exp_alerts: []}
+
+  - name: breaker open for over a minute
+    interval: 1m
+    input_series:
+      - series: 'llm_breaker_open{pod="gw-1"}'
+        values: '0 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: LLMCircuitBreakerOpen
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "A gateway circuit breaker has been open for 1 minute"
+              description: "The model server keeps failing, so at least one gateway pod is refusing requests during the breaker cooldown."
+
+  - name: 10% errors for 5 minutes fires; a short spike does not
+    interval: 1m
+    input_series:
+      - series: 'llm_http_requests_total{route="/v1/ask", code="200", pod="gw-1"}'
+        values: '0+54x15'
+      - series: 'llm_http_requests_total{route="/v1/ask", code="503", pod="gw-1"}'
+        values: '0+6x15'
+    alert_rule_test:
+      - {eval_time: 4m, alertname: LLMHighErrorRate, exp_alerts: []}   # condition true, but still pending ("for: 5m")
+      - eval_time: 12m
+        alertname: LLMHighErrorRate
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "More than 5% of API requests fail with a 5xx"
+              description: "5xx share of /v1 responses is 10% (at least 3 requests a minute)."
+
+  - name: client errors (401, 429) never count as 5xx
+    interval: 1m
+    input_series:
+      - series: 'llm_http_requests_total{route="/v1/ask", code="200", pod="gw-1"}'
+        values: '0+10x15'
+      - series: 'llm_http_requests_total{route="/v1/ask", code="429", pod="gw-1"}'
+        values: '0+50x15'
+    alert_rule_test:
+      - {eval_time: 12m, alertname: LLMHighErrorRate, exp_alerts: []}
+
+  - name: slow answers (all in the 32-64 s bucket) fire the latency alert
+    interval: 1m
+    input_series:
+      - series: 'llm_request_latency_seconds_bucket{le="16", pod="gw-1"}'
+        values: '0x15'
+      - series: 'llm_request_latency_seconds_bucket{le="32", pod="gw-1"}'
+        values: '0x15'
+      - series: 'llm_request_latency_seconds_bucket{le="64", pod="gw-1"}'
+        values: '0+5x15'
+      - series: 'llm_request_latency_seconds_bucket{le="+Inf", pod="gw-1"}'
+        values: '0+5x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: LLMHighLatencyP95
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "p95 end-to-end latency is above 30 s"
+              description: "p95 is 1m 2s. On the laptop cluster, p95 was 15.6 s at normal load and 31.2 s under a burst."
+
+  - name: citation quality drop (70% cited) fires after 10 minutes
+    interval: 1m
+    input_series:
+      - series: 'llm_rag_answers_total{outcome="cited", pod="gw-1"}'
+        values: '0+7x40'
+      - series: 'llm_rag_answers_total{outcome="uncited", pod="gw-1"}'
+        values: '0+3x40'
+    alert_rule_test:
+      - {eval_time: 5m, alertname: LLMCitationQualityLow, exp_alerts: []}
+      - eval_time: 30m
+        alertname: LLMCitationQualityLow
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Fewer than 90% of answers cite their source (last hour)"
+              description: "Only 70% of /v1/ask answers in the last hour cited a valid source on their own, below the 90% bar the CI answer gate enforces. Likely causes: a prompt or model change, or a RAG index problem."
+
+  - name: too few answers to judge quality, no alert
+    interval: 1m
+    input_series:
+      - series: 'llm_rag_answers_total{outcome="uncited", pod="gw-1"}'
+        values: '0 1 2 3 4 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5'
+    alert_rule_test:
+      - {eval_time: 20m, alertname: LLMCitationQualityLow, exp_alerts: []}
