@@ -7,6 +7,10 @@ data:
     global:
       scrape_interval: {{ .Values.prometheus.scrapeInterval }}
       evaluation_interval: {{ .Values.prometheus.scrapeInterval }}
+    # Alert rules live in rules/llmops-alerts.yml (unit-tested in CI with promtool test rules).
+    # Path is relative to this file, so it works in the pod (/etc/prometheus) and in CI.
+    rule_files:
+      - alerts.yml
     scrape_configs:
       - job_name: prometheus
         static_configs:
@@ -38,3 +42,5 @@ data:
             target_label: pod
           - source_labels: [__meta_kubernetes_pod_label_app]
             target_label: app
+  alerts.yml: |
+{{ .Files.Get "rules/llmops-alerts.yml" | indent 4 }}

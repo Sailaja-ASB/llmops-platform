@@ -3,7 +3,7 @@
 The dashboard is code: edit this file, not the JSON, then regenerate and validate:
     python3 ci/build_dashboard.py helm/observability/dashboards/llmops-overview.json
     python3 ci/check_dashboards.py        # every query must pass promtool (CI runs this too)
-Writing panels in Python keeps 18 panels consistent (same datasource, 5-minute rate windows, units, layout).
+Writing panels in Python keeps 21 panels consistent (same datasource, 5-minute rate windows, units, layout).
 """
 
 import json
@@ -81,6 +81,49 @@ def panel(kind, title, targets, x, w, h=8, unit=None, desc="", stack=False, thre
 
 green, amber, red = "green", "#EAB839", "red"
 W = "[5m]"
+
+row("Alerts (rules in helm/observability/rules/llmops-alerts.yml)")
+panel(
+    "stat",
+    "Alerts firing",
+    [('count(ALERTS{alertstate="firing"}) or vector(0)', "")],
+    0,
+    4,
+    6,
+    desc="Prometheus alert rules currently firing. Pending alerts (condition true, 'for' time not reached) are in the table.",
+    thresholds=[{"color": green, "value": None}, {"color": red, "value": 1}],
+)
+panel(
+    "stat",
+    "Model server reachable",
+    [("max(llm_model_server_ready)", "")],
+    4,
+    4,
+    6,
+    desc="1 if at least one gateway pod's last readiness check reached Ollama. Still reported when Kubernetes has removed every pod from the Service.",
+    thresholds=[{"color": red, "value": None}, {"color": green, "value": 1}],
+)
+t = panel(
+    "table",
+    "Firing and pending alerts",
+    [('ALERTS{alertstate=~"firing|pending"}', "")],
+    8,
+    16,
+    6,
+    desc="Empty means all clear. 'pending' = condition true but not yet for long enough (the rule's 'for' time).",
+)
+t["targets"][0]["format"] = "table"
+t["targets"][0]["instant"] = True
+t["transformations"] = [
+    {
+        "id": "organize",
+        "options": {
+            "excludeByName": {"Time": True, "Value": True, "__name__": True},
+            "indexByName": {"alertname": 0, "alertstate": 1, "severity": 2},
+        },
+    }
+]
+y += 6
 
 row("Is it up? Is it healthy?")
 panel(

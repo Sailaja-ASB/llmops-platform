@@ -2,6 +2,24 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D30 – Pods report model readiness as a metric (Week 6)
+**Decision:** gateway 0.5.3 exports `llm_model_server_ready` (set by every readiness check) and `llm_breaker_open`.
+The model-outage alert reads these, not error rates.
+**Why:** when Ollama is down, `/readyz` fails, Kubernetes removes every gateway pod from the Service and clients get
+"connection refused". No request reaches a pod, so `llm_http_requests_total` shows no 5xx and an error-rate alert stays
+silent during a full outage. Prometheus scrapes each pod directly, so a gauge the pod sets on its own readiness check is
+still visible. Lesson: if the failure stops traffic, alert on a signal that does not need traffic.
+
+## D29 – Alert rules as code, unit-tested in CI (Week 6)
+**Decision:** seven Prometheus rules in `helm/observability/rules/llmops-alerts.yml`: gateway down, RAG down, model server
+unreachable, breaker open, 5xx above 5%, p95 above 30 s, and fewer than 90% of answers citing their source over an hour.
+`ci/alert_tests.yml` feeds made-up series to `promtool test rules` (healthy system stays quiet, each failure fires after its
+`for` time, 401/429 never count as errors, too few answers never trigger the quality alert).
+**Why:** an alert nobody has tested either never fires or fires all the time. Testing rules like code catches both before
+merge (changing the 5% threshold to 20% fails the build). Thresholds come from measured numbers (p95 15.6 s normal, 31.2 s
+under a burst) and the quality bar matches the CI answer gate (90%), so production and CI judge answers the same way.
+Alerts show in Prometheus and on the dashboard's Alerts row; routing them to email or Slack (Alertmanager) is a later step.
+
 ## D28 – Liveness probes catch a hung process, not a slow one (Week 6)
 **Decision:** every probe in the observability chart waits 5 s for an answer (Kubernetes' default is 1 s), and a
 liveness probe restarts a pod only after 6 failures in a row (about 2 minutes). Grafana also requests 250m CPU.

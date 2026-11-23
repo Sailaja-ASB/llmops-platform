@@ -16,7 +16,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "Is it up? Is it healthy?",
+      "title": "Alerts (rules in helm/observability/rules/llmops-alerts.yml)",
       "id": 1,
       "collapsed": false,
       "gridPos": {
@@ -29,8 +29,188 @@
     },
     {
       "type": "stat",
-      "title": "Gateway pods up",
+      "title": "Alerts firing",
       "id": 2,
+      "description": "Prometheus alert rules currently firing. Pending alerts (condition true, 'for' time not reached) are in the table.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Model server reachable",
+      "id": 3,
+      "description": "1 if at least one gateway pod's last readiness check reached Ollama. Still reported when Kubernetes has removed every pod from the Service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(llm_model_server_ready)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Firing and pending alerts",
+      "id": 4,
+      "description": "Empty means all clear. 'pending' = condition true but not yet for long enough (the rule's 'for' time).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 16,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "ALERTS{alertstate=~\"firing|pending\"}",
+          "legendFormat": "",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true
+            },
+            "indexByName": {
+              "alertname": 0,
+              "alertstate": 1,
+              "severity": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Is it up? Is it healthy?",
+      "id": 5,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Gateway pods up",
+      "id": 6,
       "description": "Gateway pods Prometheus can scrape right now.",
       "datasource": {
         "type": "prometheus",
@@ -40,7 +220,7 @@
         "h": 5,
         "w": 4,
         "x": 0,
-        "y": 1
+        "y": 8
       },
       "targets": [
         {
@@ -92,7 +272,7 @@
     {
       "type": "stat",
       "title": "RAG pods up",
-      "id": 3,
+      "id": 7,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -102,7 +282,7 @@
         "h": 5,
         "w": 4,
         "x": 4,
-        "y": 1
+        "y": 8
       },
       "targets": [
         {
@@ -150,7 +330,7 @@
     {
       "type": "stat",
       "title": "API requests / s",
-      "id": 4,
+      "id": 8,
       "description": "Every /v1 response, including requests rejected at the edge (401, 413, 429).",
       "datasource": {
         "type": "prometheus",
@@ -160,7 +340,7 @@
         "h": 5,
         "w": 4,
         "x": 8,
-        "y": 1
+        "y": 8
       },
       "targets": [
         {
@@ -194,7 +374,7 @@
     {
       "type": "stat",
       "title": "Error ratio (5m)",
-      "id": 5,
+      "id": 9,
       "description": "5xx responses as a share of all /v1 responses. 4xx (bad key, rate limit, blocked attack) are the client's problem, not an outage.",
       "datasource": {
         "type": "prometheus",
@@ -204,7 +384,7 @@
         "h": 5,
         "w": 4,
         "x": 12,
-        "y": 1
+        "y": 8
       },
       "targets": [
         {
@@ -258,7 +438,7 @@
     {
       "type": "stat",
       "title": "p95 latency (5m)",
-      "id": 6,
+      "id": 10,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -268,7 +448,7 @@
         "h": 5,
         "w": 4,
         "x": 16,
-        "y": 1
+        "y": 8
       },
       "targets": [
         {
@@ -322,7 +502,7 @@
     {
       "type": "stat",
       "title": "Model cites its source (1h)",
-      "id": 7,
+      "id": 11,
       "description": "Share of /v1/ask answers where the model cited valid sources itself (outcome=cited). The production version of the CI answer gate.",
       "datasource": {
         "type": "prometheus",
@@ -332,7 +512,7 @@
         "h": 5,
         "w": 4,
         "x": 20,
-        "y": 1
+        "y": 8
       },
       "targets": [
         {
@@ -386,20 +566,20 @@
     {
       "type": "row",
       "title": "Traffic and latency",
-      "id": 8,
+      "id": 12,
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 13
       },
       "panels": []
     },
     {
       "type": "timeseries",
       "title": "API responses / s by status code",
-      "id": 9,
+      "id": 13,
       "description": "200 ok; 400 blocked by a guardrail; 401 no/bad API key; 413 too large; 422 invalid; 429 rate limited; 503 overloaded, breaker open or no model; 504 timeout.",
       "datasource": {
         "type": "prometheus",
@@ -409,7 +589,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 7
+        "y": 14
       },
       "targets": [
         {
@@ -450,7 +630,7 @@
     {
       "type": "timeseries",
       "title": "End-to-end latency",
-      "id": 10,
+      "id": 14,
       "description": "Aggregated across all gateway pods: sum the bucket rates first, then take the quantile (averaging per-pod p95s would be wrong).",
       "datasource": {
         "type": "prometheus",
@@ -460,7 +640,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 7
+        "y": 14
       },
       "targets": [
         {
@@ -510,7 +690,7 @@
     {
       "type": "timeseries",
       "title": "Time to first token (streaming)",
-      "id": 11,
+      "id": 15,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -520,7 +700,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 15
+        "y": 22
       },
       "targets": [
         {
@@ -570,7 +750,7 @@
     {
       "type": "timeseries",
       "title": "Where the time goes (p95)",
-      "id": 12,
+      "id": 16,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -580,7 +760,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 15
+        "y": 22
       },
       "targets": [
         {
@@ -639,7 +819,7 @@
     {
       "type": "timeseries",
       "title": "Generation speed (p50)",
-      "id": 13,
+      "id": 17,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -649,7 +829,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 15
+        "y": 22
       },
       "targets": [
         {
@@ -690,20 +870,20 @@
     {
       "type": "row",
       "title": "Capacity and protection",
-      "id": 14,
+      "id": 18,
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 30
       },
       "panels": []
     },
     {
       "type": "timeseries",
       "title": "In-flight generations per pod",
-      "id": 15,
+      "id": 19,
       "description": "Generations running right now. One Ollama instance serves them all, so more pods do not add model capacity.",
       "datasource": {
         "type": "prometheus",
@@ -713,7 +893,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 24
+        "y": 31
       },
       "targets": [
         {
@@ -754,7 +934,7 @@
     {
       "type": "timeseries",
       "title": "Load shed and circuit breaker",
-      "id": 16,
+      "id": 20,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -764,7 +944,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 24
+        "y": 31
       },
       "targets": [
         {
@@ -814,7 +994,7 @@
     {
       "type": "timeseries",
       "title": "Tokens / s across the platform",
-      "id": 17,
+      "id": 21,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -824,7 +1004,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 24
+        "y": 31
       },
       "targets": [
         {
@@ -874,20 +1054,20 @@
     {
       "type": "row",
       "title": "RAG answers and guardrails",
-      "id": 18,
+      "id": 22,
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 39
       },
       "panels": []
     },
     {
       "type": "timeseries",
       "title": "Answers by citation outcome",
-      "id": 19,
+      "id": 23,
       "description": "cited = model cited valid sources; cited_repaired = the gateway attached a citation; uncited / invalid_citation / no_answer = worth a look.",
       "datasource": {
         "type": "prometheus",
@@ -897,7 +1077,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 33
+        "y": 40
       },
       "targets": [
         {
@@ -938,7 +1118,7 @@
     {
       "type": "timeseries",
       "title": "Guardrail actions",
-      "id": 20,
+      "id": 24,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -948,7 +1128,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 33
+        "y": 40
       },
       "targets": [
         {
@@ -989,7 +1169,7 @@
     {
       "type": "timeseries",
       "title": "RAG retrieval time (p95, service side)",
-      "id": 21,
+      "id": 25,
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -999,7 +1179,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 33
+        "y": 40
       },
       "targets": [
         {
@@ -1040,20 +1220,20 @@
     {
       "type": "row",
       "title": "What is deployed",
-      "id": 22,
+      "id": 26,
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 48
       },
       "panels": []
     },
     {
       "type": "table",
       "title": "Versions running now",
-      "id": 23,
+      "id": 27,
       "description": "Read from the *_build_info metrics each pod exposes: what is actually running, not what the chart says.",
       "datasource": {
         "type": "prometheus",
@@ -1063,7 +1243,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 49
       },
       "targets": [
         {
