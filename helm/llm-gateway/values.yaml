@@ -28,6 +28,13 @@ config:
   guardrailsEnabled: "true"       # input injection check, context filter, output redaction + citation checks
   citationRepair: "true"          # attach a citation to clearly supported uncited sentences
 
+# Week 6 Day 3: OpenTelemetry traces, sent to the Jaeger in the observability chart.
+# Off by default so the chart works without a trace backend; enable with --set tracing.enabled=true.
+tracing:
+  enabled: false
+  endpoint: "http://observability-jaeger:4318"   # OTLP over HTTP
+  sampleRatio: "1.0"   # every request on a laptop; production would keep e.g. 0.1 (parent-based, so traces stay whole)
+
 # Secret: API keys (comma-separated). Override at install time, never commit real keys.
 apiKeys: "dev-key-change-me"
 

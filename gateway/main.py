@@ -1,5 +1,7 @@
 """LLM Gateway - LLMOps platform.
 
+0.6.0: OpenTelemetry tracing (tracing.py): one trace per request across guardrails, RAG and the model;
+       trace_id in every log line, the X-Trace-ID header and the /v1/ask response.
 0.5.4: the version is part of the code and image only; it can no longer be set from outside (APP_VERSION env
        from the chart made 0.5.2 code report 0.5.3 on the cluster).
 0.5.3: llm_model_server_ready and llm_breaker_open gauges, so alerts can see a model outage even after
@@ -53,6 +55,7 @@ from typing import Literal, Optional
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from opentelemetry import trace
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, Info, generate_latest
 from pydantic import BaseModel, Field
 
@@ -68,12 +71,13 @@ from guardrails import (
     strip_invalid_citations,
     uncited_sentences,
 )
+from tracing import current_trace_id, setup_tracing, tracer, untraced
 
 # ---------- Configuration (env vars; set by ConfigMap / Secret) ----------
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:3b")
 PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
-APP_VERSION = "0.5.4"  # baked into the image on purpose: never read from the environment (DECISIONS D31)
+APP_VERSION = "0.6.0"  # baked into the image on purpose: never read from the environment (DECISIONS D31)
 CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "3"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "120"))
 MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "32768"))
@@ -118,6 +122,9 @@ log.propagate = False
 
 
 def log_event(msg, **fields):
+    trace_id = current_trace_id()
+    if trace_id:
+        fields["trace_id"] = trace_id   # jump from a log line to the trace in Jaeger
     log.info(msg, extra={"extra_fields": fields})
 
 
@@ -244,6 +251,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="LLM Gateway", version=APP_VERSION, lifespan=lifespan)
+TRACING = setup_tracing(app, APP_VERSION)   # no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set
 
 
 def error(status, detail, request_id):
@@ -257,6 +265,7 @@ async def edge(request: Request, call_next):
     """Request ID, size limit, auth, rate limit and access log."""
     rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
     request.state.request_id = rid
+    trace.get_current_span().set_attribute("app.request_id", rid)   # search Jaeger by request id too
     start = time.perf_counter()
 
     size = request.headers.get("content-length")
@@ -271,6 +280,9 @@ async def edge(request: Request, call_next):
     else:
         resp = await call_next(request)
         resp.headers["X-Request-ID"] = rid
+    trace_id = current_trace_id()
+    if trace_id:
+        resp.headers["X-Trace-ID"] = trace_id
 
     route = request.url.path if request.url.path in KNOWN_ROUTES else "other"
     HTTP_RESPONSES.labels(route=route, code=str(resp.status_code)).inc()
@@ -322,7 +334,8 @@ async def readyz(request: Request):
     now = time.monotonic()
     if now - _ready["at"] >= READY_CACHE_S:
         try:
-            r = await request.app.state.client.get("/api/tags", timeout=2)
+            with untraced():   # probes are not traced (D32): no stray one-span "GET" traces
+                r = await request.app.state.client.get("/api/tags", timeout=2)
             r.raise_for_status()
             breaker.success()  # model server is back: close the breaker
             _ready.update(ok=True, at=now, detail="")
@@ -376,43 +389,50 @@ async def generate(req: GenerateRequest, request: Request):
 
 
 async def _generate(req: GenerateRequest, request: Request, rid: str):
-    payload = {"model": MODEL_NAME, "prompt": req.prompt, "stream": False,
-               "options": {"num_predict": req.max_tokens, "temperature": req.temperature}}
-    start = time.perf_counter()
-    try:
-        data = await call_ollama(request.app.state.client, payload, rid)
-    except httpx.ConnectError as exc:
-        REQUESTS.labels(status="error").inc()
-        raise HTTPException(status_code=503, detail=f"cannot reach model server: {exc}") from exc
-    except httpx.TimeoutException:
-        breaker.failure()
-        REQUESTS.labels(status="timeout").inc()
-        raise HTTPException(status_code=504, detail=f"model did not answer in {REQUEST_TIMEOUT}s") from None
-    except httpx.HTTPError as exc:
-        REQUESTS.labels(status="error").inc()
-        raise HTTPException(status_code=502, detail=f"upstream error: {exc}") from exc
+    with tracer.start_as_current_span("llm.generate") as span:
+        span.set_attribute("gen_ai.request.model", MODEL_NAME)
+        span.set_attribute("gen_ai.request.max_tokens", req.max_tokens)
+        span.set_attribute("gen_ai.request.temperature", req.temperature)
+        payload = {"model": MODEL_NAME, "prompt": req.prompt, "stream": False,
+                   "options": {"num_predict": req.max_tokens, "temperature": req.temperature}}
+        start = time.perf_counter()
+        try:
+            data = await call_ollama(request.app.state.client, payload, rid)
+        except httpx.ConnectError as exc:
+            REQUESTS.labels(status="error").inc()
+            raise HTTPException(status_code=503, detail=f"cannot reach model server: {exc}") from exc
+        except httpx.TimeoutException:
+            breaker.failure()
+            REQUESTS.labels(status="timeout").inc()
+            raise HTTPException(status_code=504, detail=f"model did not answer in {REQUEST_TIMEOUT}s") from None
+        except httpx.HTTPError as exc:
+            REQUESTS.labels(status="error").inc()
+            raise HTTPException(status_code=502, detail=f"upstream error: {exc}") from exc
 
-    latency = time.perf_counter() - start
-    model_s = data.get("total_duration", 0) / 1e9      # Ollama reports nanoseconds
-    eval_s = data.get("eval_duration", 0) / 1e9
-    in_tokens = int(data.get("prompt_eval_count", 0))
-    out_tokens = int(data.get("eval_count", 0))
-    tps = out_tokens / eval_s if eval_s > 0 else 0.0
+        latency = time.perf_counter() - start
+        model_s = data.get("total_duration", 0) / 1e9      # Ollama reports nanoseconds
+        eval_s = data.get("eval_duration", 0) / 1e9
+        in_tokens = int(data.get("prompt_eval_count", 0))
+        out_tokens = int(data.get("eval_count", 0))
+        tps = out_tokens / eval_s if eval_s > 0 else 0.0
 
-    REQUESTS.labels(status="ok").inc()
-    LATENCY.observe(latency)
-    MODEL_TIME.observe(model_s)
-    OVERHEAD.observe(max(latency - model_s, 0))
-    TOKENS_IN.inc(in_tokens)
-    TOKENS_OUT.inc(out_tokens)
-    TOKENS_PER_SEC.observe(tps)
-    log_event("generate", request_id=rid, model=MODEL_NAME, input_tokens=in_tokens,
-              output_tokens=out_tokens, model_s=round(model_s, 3), latency_s=round(latency, 3))
+        REQUESTS.labels(status="ok").inc()
+        LATENCY.observe(latency)
+        MODEL_TIME.observe(model_s)
+        OVERHEAD.observe(max(latency - model_s, 0))
+        TOKENS_IN.inc(in_tokens)
+        TOKENS_OUT.inc(out_tokens)
+        TOKENS_PER_SEC.observe(tps)
+        span.set_attribute("gen_ai.usage.input_tokens", in_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", out_tokens)
+        span.set_attribute("llm.model_seconds", round(model_s, 3))   # time Ollama reports for itself
+        log_event("generate", request_id=rid, model=MODEL_NAME, input_tokens=in_tokens,
+                  output_tokens=out_tokens, model_s=round(model_s, 3), latency_s=round(latency, 3))
 
-    return GenerateResponse(request_id=rid, model=MODEL_NAME, prompt_version=PROMPT_VERSION,
-                            output=data.get("response", ""), input_tokens=in_tokens,
-                            output_tokens=out_tokens, latency_s=round(latency, 3),
-                            model_s=round(model_s, 3), tokens_per_s=round(tps, 2))
+        return GenerateResponse(request_id=rid, model=MODEL_NAME, prompt_version=PROMPT_VERSION,
+                                output=data.get("response", ""), input_tokens=in_tokens,
+                                output_tokens=out_tokens, latency_s=round(latency, 3),
+                                model_s=round(model_s, 3), tokens_per_s=round(tps, 2))
 
 
 def sse(event: dict) -> str:
@@ -586,13 +606,18 @@ def guard_input(question: str, rid: str):
     """Input guardrail: block prompt-injection attempts before any retrieval or model call."""
     if not GUARDRAILS_ENABLED:
         return
-    reason = detect_injection(question)
-    if reason:
-        GUARD_BLOCKS.labels(stage="input", reason=reason).inc()
-        REQUESTS.labels(status="blocked").inc()
-        log_event("guardrail_block", request_id=rid, stage="input", reason=reason)
-        raise HTTPException(status_code=400, detail={"error": "blocked_by_guardrail", "stage": "input",
-                                                     "reason": reason, "request_id": rid})
+    # A block is an expected outcome, not a failure: recorded as attributes, span status stays OK.
+    with tracer.start_as_current_span("guardrail.input", record_exception=False,
+                                      set_status_on_exception=False) as span:
+        reason = detect_injection(question)
+        span.set_attribute("guardrail.blocked", bool(reason))
+        if reason:
+            span.set_attribute("guardrail.reason", reason)
+            GUARD_BLOCKS.labels(stage="input", reason=reason).inc()
+            REQUESTS.labels(status="blocked").inc()
+            log_event("guardrail_block", request_id=rid, stage="input", reason=reason)
+            raise HTTPException(status_code=400, detail={"error": "blocked_by_guardrail", "stage": "input",
+                                                         "reason": reason, "request_id": rid})
 
 
 async def retrieve(request: Request, req: AskRequest, rid: str) -> tuple[list[dict], float]:
@@ -600,24 +625,31 @@ async def retrieve(request: Request, req: AskRequest, rid: str) -> tuple[list[di
     body = {"question": req.question, "top_k": req.top_k}
     if req.mode:
         body["mode"] = req.mode
-    start = time.perf_counter()
-    try:
-        r = await request.app.state.rag.post("/v1/retrieve", json=body, headers={"X-Request-ID": rid})
-        r.raise_for_status()
-    except httpx.HTTPError as exc:
-        REQUESTS.labels(status="rag_error").inc()
-        log_event("rag_error", request_id=rid, error=str(exc))
-        raise HTTPException(status_code=503, detail=f"retrieval service unavailable: {exc}") from exc
-    elapsed = time.perf_counter() - start
-    RAG_RETRIEVE.observe(elapsed)
-    chunks = r.json()["chunks"]
-    if GUARDRAILS_ENABLED:
-        chunks, blocked = filter_chunks(chunks)
-        for c in blocked:
-            GUARD_BLOCKS.labels(stage="context", reason=c["blocked_reason"]).inc()
-            log_event("guardrail_block", request_id=rid, stage="context", reason=c["blocked_reason"],
-                      source=c["source"], chunk_index=c["chunk_index"])
-    return chunks, elapsed
+    with tracer.start_as_current_span("rag.retrieve") as span:
+        span.set_attribute("rag.top_k", req.top_k)
+        span.set_attribute("rag.mode", req.mode or "service default")
+        start = time.perf_counter()
+        try:
+            r = await request.app.state.rag.post("/v1/retrieve", json=body, headers={"X-Request-ID": rid})
+            r.raise_for_status()
+        except httpx.HTTPError as exc:
+            REQUESTS.labels(status="rag_error").inc()
+            log_event("rag_error", request_id=rid, error=str(exc))
+            raise HTTPException(status_code=503, detail=f"retrieval service unavailable: {exc}") from exc
+        elapsed = time.perf_counter() - start
+        RAG_RETRIEVE.observe(elapsed)
+        chunks = r.json()["chunks"]
+        blocked = []
+        if GUARDRAILS_ENABLED:
+            chunks, blocked = filter_chunks(chunks)
+            for c in blocked:
+                GUARD_BLOCKS.labels(stage="context", reason=c["blocked_reason"]).inc()
+                log_event("guardrail_block", request_id=rid, stage="context", reason=c["blocked_reason"],
+                          source=c["source"], chunk_index=c["chunk_index"])
+        span.set_attribute("rag.chunks_kept", len(chunks))
+        span.set_attribute("rag.chunks_blocked", len(blocked))
+        span.set_attribute("rag.sources", sorted({c["source"] for c in chunks}))
+        return chunks, elapsed
 
 
 PROMPTS = {
@@ -736,15 +768,21 @@ async def ask(req: AskRequest, request: Request):
                                                   max_tokens=req.max_tokens, temperature=req.temperature),
                                   request, rid)
             raw = gen.output
-        stats = new_stats()
-        answer = make_cleaner(chunks, stats)(raw)
-        result = summarize(raw, answer, chunks, stats)
+        with tracer.start_as_current_span("guardrail.output") as span:
+            stats = new_stats()
+            answer = make_cleaner(chunks, stats)(raw)
+            result = summarize(raw, answer, chunks, stats)
+            span.set_attribute("rag.outcome", result["outcome"])   # cited / cited_repaired / uncited / ...
+            span.set_attribute("rag.citations", len(result["citations"]))
+            span.set_attribute("guardrail.repaired", len(result["repaired"]))
+            span.set_attribute("guardrail.redactions", len(result["redactions"]))
+        trace.get_current_span().set_attribute("rag.prompt_version", version)
         latency = time.perf_counter() - start
         log_event("ask", request_id=rid, prompt_version=version, outcome=result["outcome"],
                   repaired=result["repaired"], redactions=result["redactions"],
                   retrieve_ms=round(retrieve_s * 1000, 1), latency_s=round(latency, 3),
                   sources=[c["source"] for c in chunks])
-        return {"request_id": rid, "model": MODEL_NAME, "prompt_version": version,
+        return {"request_id": rid, "trace_id": current_trace_id(), "model": MODEL_NAME, "prompt_version": version,
                 "question": req.question, "answer": answer, **result,
                 "sources": source_list(chunks), "retrieve_ms": round(retrieve_s * 1000, 1),
                 "model_s": gen.model_s if gen else 0.0, "latency_s": round(latency, 3),

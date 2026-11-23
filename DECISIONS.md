@@ -2,6 +2,20 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D32 – One trace per request, with spans named after the platform's own steps (Week 6)
+**Decision:** gateway 0.6.0 uses OpenTelemetry. FastAPI and httpx are instrumented automatically; four manual spans name the
+steps that matter here: `guardrail.input`, `rag.retrieve`, `llm.generate`, `guardrail.output`, with attributes such as
+chunks kept or blocked, tokens, time inside the model and the citation outcome. Traces go over OTLP to Jaeger (in the
+observability chart, also a Grafana datasource). The trace id is in every log line, the `X-Trace-ID` header and the
+`/v1/ask` response; the `traceparent` header is passed on to the RAG service. Tracing is off unless
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set (chart value `tracing.enabled`), so tests and CI need no backend.
+**Why:** metrics say *that* p95 is 31 s; a trace says *where* one slow request spent its time. Spans named after our own
+steps make a trace readable without knowing the code, and a blocked question is recorded as an attribute, not an error, so
+"errors" in Jaeger mean real failures. Health probes and scrapes are not traced (they would bury real requests); this includes the readiness check's own call to
+Ollama, which first showed up as a stray one-span "GET" trace every few seconds. Unit tests
+check that one `/v1/ask` produces exactly one trace with all four steps as children of the request span.
+Not traced yet: inside the RAG service (BM25 vs. dense vs. fusion); it receives the trace context and can join later.
+
 ## D31 – A service's version comes from its image, never from the chart (Week 6)
 **Decision:** the Helm charts no longer set `APP_VERSION`; gateway 0.5.4 hard-codes its version in the code, so
 `/version` and `llm_gateway_build_info` report what is really running. `image.tag` defaults to the chart's `appVersion`

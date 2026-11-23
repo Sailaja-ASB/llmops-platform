@@ -1,0 +1,61 @@
+{{- if .Values.jaeger.enabled }}
+# Jaeger v2 all-in-one (Week 6 Day 3): receives OpenTelemetry traces (OTLP 4317/4318), keeps them in memory,
+# and serves the trace UI on 16686. In-memory means traces are gone when the pod restarts: fine for a laptop,
+# production would use Elasticsearch/Cassandra or a managed tracing backend.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-jaeger
+  labels:
+    app: {{ .Release.Name }}-jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-jaeger
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: {{ .Values.jaeger.image }}
+          env:
+            - name: JAEGER_LISTEN_HOST   # listen on the pod IP, not only localhost
+              value: "0.0.0.0"
+          ports:
+            - {name: ui, containerPort: 16686}
+            - {name: otlp-grpc, containerPort: 4317}
+            - {name: otlp-http, containerPort: 4318}
+          startupProbe:
+            tcpSocket: {port: 16686}
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket: {port: 4318}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: 16686}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.jaeger.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-jaeger
+spec:
+  selector:
+    app: {{ .Release.Name }}-jaeger
+  ports:
+    - {name: ui, port: 16686, targetPort: 16686}
+    - {name: otlp-grpc, port: 4317, targetPort: 4317}
+    - {name: otlp-http, port: 4318, targetPort: 4318}
+{{- end }}

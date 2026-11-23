@@ -11,7 +11,7 @@ select = [
 ]
 
 [lint.isort]
-known-first-party = ["guardrails", "fusion", "retriever"]
+known-first-party = ["guardrails", "fusion", "retriever", "tracing"]
 
 [lint.per-file-ignores]
 "gateway/guardrails.py" = ["E501"]   # attack patterns are long regexes; splitting them hurts readability
