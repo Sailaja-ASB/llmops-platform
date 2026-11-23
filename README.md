@@ -5,8 +5,8 @@
 A production-style platform for serving, scaling, grounding and guarding a self-hosted LLM,
 built one week at a time on a MacBook Air (M1, 8 GB) and measured at every step.
 
-**Status:** Weeks 1–5 complete: gateway → Kubernetes + Helm → streaming, load testing and autoscaling →
-RAG with verified citations and guardrails → eval-gated CI/CD. Now: observability (Prometheus + Grafana + tested alert rules).
+**Status:** Weeks 1–6 complete: gateway → Kubernetes + Helm → streaming, load testing and autoscaling →
+RAG with verified citations and guardrails → eval-gated CI/CD → observability (Prometheus + Grafana, tested alert rules, OpenTelemetry tracing).
 
 ## Highlights
 
@@ -20,7 +20,7 @@ RAG with verified citations and guardrails → eval-gated CI/CD. Now: observabil
 | Stress-test errors after fixing probes and graceful shutdown | **30% → 0%** |
 | Streaming: perceived latency (time to first token, warm) | **3.3 s → 0.2 s** |
 
-Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (31 decisions)
+Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (32 decisions)
 
 ## Architecture
 
@@ -61,7 +61,7 @@ Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/
 
 | Job | What must pass |
 |---|---|
-| Lint, unit tests, versions | `ruff` ([ruff.toml](ruff.toml)), 34 unit tests (guardrails + question sets), code version = Helm appVersion = image tag |
+| Lint, unit tests, versions | `ruff` ([ruff.toml](ruff.toml)), 38 unit tests (guardrails, question sets, tracing), code version = Helm appVersion = image tag |
 | Helm charts | `helm lint` and rendered manifests (gateway, RAG, observability) validated with `kubeconform -strict`; Prometheus config checked with `promtool`; every dashboard PromQL query must parse ([check_dashboards.py](ci/check_dashboards.py)); alert rules pass unit tests ([alert_tests.yml](ci/alert_tests.yml)) |
 | Gateway image + smoke test | the real image starts with no model and passes [9 checks](ci/smoke_gateway.sh): health, readiness 503, version, auth 401, injection blocked 400, quoted attack allowed, validation 422, the 401 counted in metrics, guardrail metrics |
 | RAG image + retrieval gate | the real RAG image, started with the Helm chart's settings, must reach **Top-1 ≥ 95%** on the 47-question benchmark in the mode it ships with |
@@ -104,9 +104,9 @@ Requirements: Docker, kind, kubectl, Helm, Ollama with `qwen2.5:3b` pulled.
 ```bash
 # 1. Cluster and images
 kind create cluster --config kind-config.yaml
-docker build -t llm-gateway:0.5.4 gateway/
+docker build -t llm-gateway:0.6.0 gateway/
 docker build -t rag-service:0.1.0 rag/          # first build ~5-10 min (PyTorch + models)
-kind load docker-image llm-gateway:0.5.4 --name llmops
+kind load docker-image llm-gateway:0.6.0 --name llmops
 kind load docker-image rag-service:0.1.0 --name llmops
 
 # 2. Deploy
@@ -125,6 +125,8 @@ kubectl -n llmops port-forward svc/observability-grafana 3000:3000 &     # http:
 kubectl -n llmops port-forward svc/observability-prometheus 9090:9090 &  # http://localhost:9090/targets
 bash loadtest/dashboard_traffic.sh http://localhost:8080 "$KEY" 10        # fills every panel, ends with a 429 burst
 # A port-forward follows one pod: after a rollout or restart, run it again.
+# Traces: helm upgrade llm-gateway helm/llm-gateway -n llmops --reuse-values --set tracing.enabled=true
+kubectl -n llmops port-forward svc/observability-jaeger 16686:16686 &   # http://localhost:16686
 # Alerts: http://localhost:9090/alerts (7 rules, unit-tested with promtool test rules ci/alert_tests.yml)
 
 # 5. Evaluate
@@ -144,7 +146,7 @@ Step-by-step guides with expected output: [WEEK2](WEEK2_GUIDE.md) · [WEEK3](WEE
 - [x] Week 3: SSE streaming, load shedding, Locust load tests, HPA (and a real probe bug fixed)
 - [x] Week 4: RAG service, verified citations, layered guardrails, red-team eval
 - [x] Week 5: Eval-gated CI/CD with GitHub Actions: 5 required gates, held-out eval, nightly full eval, images on ghcr.io
-- [ ] Week 6: Observability: Prometheus + Grafana dashboards, tracing
+- [x] Week 6: Observability: Prometheus + Grafana dashboard as code, 7 alert rules unit-tested in CI, OpenTelemetry tracing with Jaeger
 
 ## Related
 

@@ -20,3 +20,9 @@ data:
   RAG_PROMPT_VERSION: {{ .Values.config.ragPromptVersion | quote }}
   GUARDRAILS_ENABLED: {{ .Values.config.guardrailsEnabled | quote }}
   CITATION_REPAIR: {{ .Values.config.citationRepair | quote }}
+{{- if .Values.tracing.enabled }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.tracing.endpoint | quote }}
+  OTEL_SERVICE_NAME: {{ .Release.Name | quote }}
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: {{ .Values.tracing.sampleRatio | quote }}
+{{- end }}

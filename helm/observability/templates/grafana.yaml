@@ -24,6 +24,14 @@ data:
         url: http://{{ .Release.Name }}-prometheus:9090
         isDefault: true
         editable: false
+{{- if .Values.jaeger.enabled }}
+      - name: Jaeger
+        uid: jaeger
+        type: jaeger
+        access: proxy
+        url: http://{{ .Release.Name }}-jaeger:16686
+        editable: false
+{{- end }}
   dashboards.yaml: |
     apiVersion: 1
     providers:
