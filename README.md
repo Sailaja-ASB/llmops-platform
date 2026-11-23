@@ -20,7 +20,7 @@ RAG with verified citations and guardrails → eval-gated CI/CD. Now: observabil
 | Stress-test errors after fixing probes and graceful shutdown | **30% → 0%** |
 | Streaming: perceived latency (time to first token, warm) | **3.3 s → 0.2 s** |
 
-Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (30 decisions)
+Full numbers and test setups: [BENCHMARKS.md](BENCHMARKS.md) · Why it is built this way: [DECISIONS.md](DECISIONS.md) (31 decisions)
 
 ## Architecture
 
@@ -104,14 +104,15 @@ Requirements: Docker, kind, kubectl, Helm, Ollama with `qwen2.5:3b` pulled.
 ```bash
 # 1. Cluster and images
 kind create cluster --config kind-config.yaml
-docker build -t llm-gateway:0.5.2 gateway/
+docker build -t llm-gateway:0.5.4 gateway/
 docker build -t rag-service:0.1.0 rag/          # first build ~5-10 min (PyTorch + models)
-kind load docker-image llm-gateway:0.5.2 --name llmops
+kind load docker-image llm-gateway:0.5.4 --name llmops
 kind load docker-image rag-service:0.1.0 --name llmops
 
 # 2. Deploy
 helm upgrade --install rag-service helm/rag-service -n llmops --create-namespace
 helm upgrade --install llm-gateway helm/llm-gateway -n llmops --set apiKeys="sk-$(openssl rand -hex 12)"
+# Image tags default to each chart's appVersion: never pass --set image.tag (Helm remembers it on later upgrades)
 export KEY=$(kubectl -n llmops get secret llm-gateway-secret -o jsonpath='{.data.API_KEYS}' | base64 -d)
 
 # 3. Ask a question

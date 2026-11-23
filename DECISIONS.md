@@ -2,6 +2,16 @@
 
 Short records of why the platform is built the way it is. Newest first.
 
+## D31 – A service's version comes from its image, never from the chart (Week 6)
+**Decision:** the Helm charts no longer set `APP_VERSION`; gateway 0.5.4 hard-codes its version in the code, so
+`/version` and `llm_gateway_build_info` report what is really running. `image.tag` defaults to the chart's `appVersion`
+(left empty in values.yaml), and `ci/check_versions.py` accepts an empty tag as "same as appVersion".
+**Why:** on the cluster, `/version` said 0.5.3 while the pod ran 0.5.2 code. The ConfigMap set `APP_VERSION` from the
+chart, and `--reset-then-reuse-values` had kept an old `--set image.tag=0.5.2` from an earlier upgrade, so a new chart
+quietly kept the old image. The dashboard's Versions table and the alerts metric were wrong at the same time, and only
+looking inside the pod (`grep MODEL_READY /app/main.py` returned 0) showed it. A version label is only useful if the
+running code produces it. CI already starts the image without any APP_VERSION and checks /version against the chart.
+
 ## D30 – Pods report model readiness as a metric (Week 6)
 **Decision:** gateway 0.5.3 exports `llm_model_server_ready` (set by every readiness check) and `llm_breaker_open`.
 The model-outage alert reads these, not error rates.
